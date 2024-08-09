@@ -6,12 +6,14 @@ Enterotypes describe human fecal microbiomes grouped by similarity into clusters
 This repository contains information for the work preprinted in Keller et al. 2024 "Refined Enterotyping Reveals Dysbiosis in Global Fecal Metagenomes"
 
 
-<img src="utils/Enterotyper_logo_less.png" width=20% height=20%>      
-the prediciton tool "Enterotyper" can be found at [www.enterotype.embl.de](https://enterotype.embl.de/). 
+<img src="utils/Enterotyper_logo_less.png" width=20% height=20%>
+the prediciton tool "Enterotyper" can be found at https://enterotype.embl.de/
 
 
 
-<img src="utils/EU.png" width=5% height=5%> <img src="utils/MICROB-PREDICT_logo.png" width=20% height=20%>  <img src="utils/50years-SmallScale_EMBL_logo_colour_RGB.png" width=20% height=20%>  <img src="utils/normal_version.png" width=11% height=11%>      
+ <img src="utils/50years-SmallScale_EMBL_logo_colour_RGB.png" width=20% height=20%>  <img src="utils/normal_version.png" width=11% height=11%>      
+
+ <img src="utils/EU.png" width=5% height=5%> <img src="utils/MICROB-PREDICT_logo.png" width=20% height=20%>    
 This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No 825694.
 
 
