@@ -1,0 +1,475 @@
+---
+title: "Associations Enterotypes and Diseases on global cohort"
+author: "Marisa Keller"
+output:
+   html_document:
+    code_folding: show
+    number_sections: yes
+    smart: no
+    toc: yes
+    df_print: paged
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+# Setup 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(ggplot2)
+library(patchwork)
+library(tidyverse)
+library(ggembl)
+library(ggridges)
+library(plotly)
+library(ggpubr)
+library(ggExtra)
+library(cowplot)
+library(hrbrthemes)
+library(grid)
+library(PupillometryR) 
+library(stats)
+
+theme_set(theme_publication())
+source(here("utils/Colors.R"))
+```
+
+import data
+```{r message=FALSE, warning=FALSE}
+metadata <- readRDS(here("data/metadata.rds")) 
+counts <- readRDS(here("data/motusMatrix_Genuslevel_gtdb_adults_filtered.rds"))
+```
+
+
+
+# ET & Demographics
+
+```{r fig.height=3, fig.width=3, warning=FALSE}
+metadata <- metadata %>% mutate(fkm_k3 = factor(fkm_k3, levels = c("Prevotella", "Firmicutes", "Bact_Phoc")))
+alpha.plot <- metadata %>% 
+  ggplot(aes(y=Shannon, x = fkm_k3, fill = fkm_k3))+
+  geom_flat_violin(position = position_nudge(x=.1, y=0), alpha = 0.5)+
+  geom_boxplot(width = 0.18, color= "grey20", alpha = 0.5,position= position_nudge(x=c(-.05)))+
+  scale_fill_manual(values = enterotype_colors)+
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("Bact_Phoc", "Firmicutes"), 
+                                         c("Bact_Phoc", "Prevotella"),
+                                         c("Firmicutes", "Prevotella")),
+                     aes(label = after_stat(p.signif)), vjust = 0.3)+ xlab("")+ 
+  theme_publication()+
+  theme(legend.position = "none", panel.grid = element_line(color = "grey50", linewidth = 0.1))
+alpha.plot
+
+bmi.plot <- metadata %>% 
+  ggplot(aes(y=bmi, x = fkm_k3, fill = fkm_k3))+
+  geom_hline(yintercept = c(18.5, 25, 30), color = "grey40", linetype = "dashed")+
+  geom_flat_violin(position = position_nudge(x=.1, y=0), alpha = 0.5)+
+  geom_boxplot(width = 0.18, color= "grey20", alpha = 0.5,position= position_nudge(x=c(-.05)))+
+  scale_fill_manual(values = enterotype_colors)+
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("Bact_Phoc", "Firmicutes"), 
+                                         c("Bact_Phoc", "Prevotella"),
+                                         c("Firmicutes", "Prevotella")),
+                     aes(label = after_stat(p.signif)), vjust = 0.3)+
+  scale_y_log10()+xlab("")+
+  
+    theme_publication()+
+  theme(legend.position = "none", panel.grid = element_line(color = "grey50", linewidth = 0.1))
+bmi.plot
+
+age.plot <- metadata %>% 
+  ggplot(aes(y=age_years, x = fkm_k3, fill = fkm_k3))+
+  geom_flat_violin(position = position_nudge(x=.1, y=0), alpha = 0.5)+
+  geom_boxplot(width = 0.18, color= "grey20", alpha = 0.5,position= position_nudge(x=c(-.05)))+
+  scale_fill_manual(values = enterotype_colors)+
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("Bact_Phoc", "Firmicutes"), 
+                                         c("Bact_Phoc", "Prevotella"),
+                                         c("Firmicutes", "Prevotella")),
+                     aes(label = after_stat(p.signif)), vjust = 0.3)+
+  xlab("")+
+    theme_publication()+
+  theme(legend.position = "none", panel.grid = element_line(color = "grey50", linewidth = 0.1))
+age.plot
+```
+
+
+# Stats on age
+```{r}
+metadata %>% filter(fkm_k3 == "Firmicutes") %>% pull(age_years) %>% mean(na.rm =T)
+metadata %>% filter(fkm_k3 == "Bact_Phoc") %>% pull(age_years) %>% mean(na.rm =T)
+metadata %>% filter(fkm_k3 == "Prevotella") %>% pull(age_years) %>% mean(na.rm =T)
+
+metadata %>% filter(fkm_k3 == "Firmicutes") %>% pull(age_years) %>% sd(na.rm =T)
+metadata %>% filter(fkm_k3 == "Bact_Phoc") %>% pull(age_years) %>% sd(na.rm =T)
+metadata %>% filter(fkm_k3 == "Prevotella") %>% pull(age_years) %>% sd(na.rm =T)
+```
+
+# Statistical test for sex difference
+```{r}
+gender_df <- metadata %>% 
+  filter(!is.na(gender)) %>% 
+  select(fkm_k3, gender) %>% 
+  table() %>% as.data.frame() 
+#what is the gender proportion within out cohort? 
+females <- metadata %>% filter(gender == "female") %>% nrow()  
+males <- metadata %>% filter(gender == "male") %>% nrow()
+total.gender.known. <- metadata %>% filter(!is.na(gender)) %>% nrow()
+round(females/total.gender.known., 2)
+round(males/total.gender.known.,2)
+# Statistical test over all enterotypes
+# first, transform your data into a table format suitable for chi-square test
+tbl <- gender_df %>% pivot_wider(names_from = gender, values_from = Freq)
+
+# then apply chi-square test
+chisq_test <- chisq.test(tbl[, -1])
+
+# print the results
+print(chisq_test)
+
+
+# Chi-Squared Goodness-of-Fit test
+# This will give you the p-value for each fkm_k3 group, showing whether the observed gender ratio significantly deviates from the expected 1:1 ratio.
+# Split the data frame by fkm_k3
+df_split <- split(gender_df, gender_df$fkm_k3)
+
+# Function to apply a Chi-Squared Goodness-of-Fit test
+apply_chisq_test <- function(df_group) {
+  # Observed frequencies
+  observed <- df_group$Freq
+  
+  # Expected frequencies (assuming 1:1 ratio)
+  total <- sum(df_group$Freq)
+  expected <- c(round(females/total.gender.known., 2),round(males/total.gender.known.,2))
+  
+  # Chi-Squared Goodness-of-Fit test
+  chisq_test_result <- chisq.test(observed, p = expected)
+  
+  return(chisq_test_result$p.value)
+}
+
+# Apply the function to each group
+p_values <- sapply(df_split, apply_chisq_test)
+names(p_values) <- names(df_split)
+
+p.adjust(p_values, method = "BH")
+
+gender.plot <- gender_df %>% 
+  ggplot(aes(y=Freq, x = fkm_k3, fill = gender))+
+  geom_bar(position="fill", stat="identity")+
+  annotate("text", x = 1, y = 0.95, label ="****")+
+  annotate("text", x = 2, y = 0.95, label = "**")+
+  annotate("text", x = 1, y = 0.7, label = "female", size =2)+
+  annotate("text", x = 1, y = 0.45, label = "male", size = 2)+
+  #annotate("text", x = 0.8, y = 0.47, label ="expected ratio", size = 2)+
+  scale_fill_manual(values = c("#E9C46A", "#84a98c"))+
+  xlab("")+ylab("Frequency")+
+  
+  theme(legend.position = "none", axis.text.x = element_text(angle=45, hjust=1,vjust=1))+
+  #theme(legend.position = c(0.17,0.58), panel.grid = element_line(color = "grey50", linewidth = 0.1), legend.title = element_blank(),legend.key.width =  unit(0.15, "cm" ), legend.key.height = unit(1.5, "cm"))+
+  geom_hline(yintercept = 0.51, linetype = "dotted", color = "grey30")
+
+gender.plot
+```
+
+
+# Enterotypes & Diet
+```{r}
+Vegetarians <- metadata %>% filter(diet == "vegetarian") %>% pull(internal_id)
+Vegans <- metadata %>% filter(diet == "vegan") %>% pull(internal_id)
+Omnivores <- metadata %>% filter(diet == "omnivorous") %>% pull(internal_id)
+
+diet.data <- metadata %>% filter(internal_id %in% c(Vegetarians, Vegans, Omnivores)) %>% 
+  mutate(diet = case_when(internal_id %in% Vegetarians ~ "vegetarian", 
+                          internal_id %in% Vegans ~ "vegan", 
+                          internal_id %in% Omnivores ~ "omnivore", 
+                          TRUE ~ as.character(NA)))
+
+
+diet.data %>% count(diet, fkm_k3) %>% #View()
+  mutate(diet = factor(diet, levels = c("omnivore", "vegetarian", "vegan"))) %>% 
+  ggplot(aes(x = diet, y = n, fill = fkm_k3))+
+    geom_bar(position="fill", stat="identity")+
+  scale_fill_manual(values = enterotype_colors)+
+  geom_label(aes(label=n), position = "fill", stat="identity", fill = "grey90" )
+
+diet.plot <- diet.data %>% count(diet,fkm_k3) %>%
+  rbind(tibble(diet = "vegan", fkm_k3 = "Bact_Phoc", n = 0)) %>% 
+  group_by(diet) %>% 
+  mutate(n_total =sum(n)) %>% 
+  mutate(fraction_diet  = n/n_total) %>% 
+   mutate(diet = factor(diet, levels = rev(c("omnivore", "vegetarian", "vegan")))) %>% 
+  ggplot(aes(x=diet, y = fraction_diet, fill = fkm_k3))+
+  geom_segment( aes(x=diet, xend=diet, y=0, yend=fraction_diet)) +
+  geom_point( size=2, shape=21)+
+  geom_text(aes(label=n), size = 3, hjust = -0.7)+
+  scale_fill_manual(values = enterotype_colors)+
+  #scale_fill_manual= values()
+  facet_wrap(~fkm_k3, nrow=3)+
+  theme(legend.position = "none")+
+  coord_flip()+
+  ylim(c(0,0.8))
+diet.plot
+  
+expected <- c(5635, 8265, 2872)
+# Create a contingency table
+contingency_table <- xtabs(n ~ diet + fkm_k3, data = diet.data %>% count(diet, fkm_k3))
+
+# Perform the Chi-Square Test
+chi_sq_result <- chisq.test(contingency_table,  p = expected)
+chi_sq_result
+
+```
+
+# Enterotypes & Diseases
+```{r}
+metadata <- metadata %>% 
+    mutate(is.diseased = case_when(disease == "None reported" ~ "healthy subjects", 
+                                 disease != "None reported" ~ "patients"),
+           is.diseased = case_when(is.na(disease) ~ "unknown disease status", TRUE ~ is.diseased),
+           fkm_k3 = factor(fkm_k3, levels = c("Prevotella", "Firmicutes", "Bact_Phoc"))) %>% 
+  dplyr::mutate(is.diseased = factor(is.diseased, levels = c("healthy subjects","unknown disease status", "patients"))) 
+```
+
+# Disease Associations glm & lmer 
+## linear models 
+
+```{r eval=FALSE, include=FALSE}
+
+# Funtion for lmer model 
+make.model.lmer <- function(data, input_column_name){
+    diseases <- data %>% filter(!is.na(disease) & disease != "None reported") %>% 
+      pull(disease) %>% unique()
+    col <- enquo(input_column_name)
+    for(d in 1:length(diseases)){
+
+      d.chr <- diseases[d]
+      print(d.chr)
+      # filter data for the samples for one disease
+      md <- data %>% filter(studies %in% c(data %>% filter(disease == d.chr) %>% 
+                                      pull(studies) %>% unique())) %>% 
+        filter(disease %in% c(d.chr, "None reported")) %>% 
+        # order the levels for order in the model 
+        mutate(disease = factor(disease, levels = c("None reported", d.chr))) %>% 
+        mutate(prob_column = !!col) # for loop 
+  
+      # number of studies 
+      n.studies <- md %>% pull(studies) %>% unique() %>% length()
+      # are there multiple subjects? 
+      multiple_subjects <- md %>% pull(subject_id) %>% unique() %>% length() != nrow(md) 
+      
+      if(multiple_subjects == TRUE){
+        if(n.studies >= 2){
+          print("model with multiple studies and multiple samples per subjects")
+         try( res <- lmerTest::lmer(prob_column ~ disease + total_counts + (1|studies) + (1|subject_id), data = md))
+        } else {
+          print("model with multiple samples per subject but only 1 study")
+         try( res <- lmerTest::lmer(prob_column ~ disease + total_counts  + (1|subject_id), data = md))
+        }
+      } else {
+        if(n.studies >=2){
+          print("model with multiple studies and 1 sample per subject") 
+         try( res <-lmerTest::lmer(prob_column ~ disease + total_counts  + (1|studies), data = md))
+        } else{
+          print("model with 1 sample per subject and only 1 study") 
+          #try( res <- glm(prob_column ~ disease + total_counts, data = md ))
+        }
+        
+      }
+       # save the results 
+    tmp <- tibble(disease = d.chr, 
+                  Enterotype = as.character(col)[2], 
+                  coefficient = coef(summary(res))[2,1],
+                  p_value = coef(summary(res))[2,5],
+                  nStudies = n.studies, 
+                  nSamples = nrow(md),
+                  nCase = nrow(md %>% filter(disease == d.chr)),
+                  nControl = nrow(md %>% filter(disease == "None reported")),
+                  multipleSubjects = multiple_subjects)
+    results <- bind_rows(results, tmp)
+
+    }
+ return(results)
+  }
+
+
+# funciton for glm model
+
+make.model.glm <- function(data, input_column_name){
+  diseases <- data %>% filter(!is.na(disease) & disease != "None reported") %>% 
+    pull(disease) %>% unique()
+  col <- enquo(input_column_name)
+  for(d in 1:length(diseases)){
+    #d =  # for trying
+    #input_column_name = "prob_Bact_Phoc"
+    # data = metadata
+    d.chr <- diseases[d]
+    # filter data for the samples for one disease
+    md <- data %>% filter(studies %in% c(data %>% filter(disease == d.chr) %>% 
+                                           pull(studies) %>% unique())) %>% 
+      filter(disease %in% c(d.chr, "None reported")) %>% 
+      # order the levels for order in the model 
+      mutate(disease = factor(disease, levels = c("None reported", d.chr))) %>% 
+      #mutate(prob_column = prob_Bact_Phoc)
+      mutate(prob_column = !!col) # check this! 
+    #print(md$prob_column)
+    
+    # number of studies 
+    n.studies <- md %>% pull(studies) %>% unique() %>% length()
+    
+    print(d.chr)
+    try(res <- glm(prob_column ~ disease + total_counts, data = md ))
+    
+    
+    # save the results 
+    tmp <- tibble(disease = d.chr, 
+                  Enterotype = as.character(col)[2], 
+                  coefficient = coef(res)[2],
+                  p_value = coef(summary(res))[2,4],
+                  nStudies = n.studies, 
+                  nSamples = nrow(md),
+                  nCase = nrow(md %>% filter(disease == d.chr)),
+                  nControl = nrow(md %>% filter(disease == "None reported")),
+                  multipleSubjects = FALSE)
+    
+    results <- bind_rows(results, tmp)
+    
+  }
+  return(results)
+}
+
+
+```
+
+## calculate linear models 
+```{r eval=FALSE, include=FALSE}
+# LMER
+# We need to remove studies that do not have case and control 
+case_ctr_studies <- metadata %>% summarize(studies, disease) %>% distinct() %>% group_by(studies) %>% mutate(how_many_group = n()) %>% 
+  filter(how_many_group >= 2) %>% 
+  pull(studies)
+# we need to remove disease that have only one study and one subject per sample, because they need glm test 
+oneStudy_oneSubject  <- metadata %>% summarize(studies, disease)
+oneStudy_oneSubject <- metadata %>% 
+  group_by(disease) %>% mutate(number_studies = length(unique(studies))) %>% # number of studies per disease 
+  filter(number_studies == 1) %>% # filter for 1 study per samples
+  group_by(disease,studies) %>% mutate(number_samples = n()) %>% mutate(number_subjects = length(unique(subject_id))) %>% 
+  filter(number_samples == number_subjects) %>%  # check if number of samples is the same as subjects 
+  select(disease, studies, number_samples, number_subjects, number_studies) %>% distinct() %>% pull(studies)
+# we remove Vincent_2016 because they have two groups (CDI and hospitalized), but no control cases
+oneStudy_oneSubject_vincent <- c(oneStudy_oneSubject, "Vincent_2016") 
+
+metadata.lmer <- metadata %>% filter(studies %in% case_ctr_studies) %>% filter(!studies %in% oneStudy_oneSubject_vincent)
+
+pB <- make.model.lmer(metadata.lmer , prob_Bact_Phoc)
+pP <- make.model.lmer(metadata.lmer , prob_Prevotella)
+pF <- make.model.lmer(metadata.lmer , prob_Firmicutes)
+pD <- make.model.lmer(metadata.lmer , ET_dysbiosis)
+lmer_results <- bind_rows(pB, pP, pF, pD)
+
+# GLM 
+pB <- make.model.glm(metadata %>%filter(studies %in% case_ctr_studies) %>%  filter(studies %in% oneStudy_oneSubject), prob_Bact_Phoc)
+pP <- make.model.glm(metadata %>% filter(studies %in% case_ctr_studies) %>%  filter(studies %in% oneStudy_oneSubject), prob_Prevotella)
+pF <- make.model.glm(metadata %>% filter(studies %in% case_ctr_studies) %>%  filter(studies %in% oneStudy_oneSubject), prob_Firmicutes)
+pD <- make.model.glm(metadata %>% filter(studies %in% case_ctr_studies) %>% filter(studies %in% oneStudy_oneSubject), ET_dysbiosis)
+
+glm_results <- bind_rows(pB, pP, pF, pD) %>% 
+  filter(!disease %in% c("CD", "CRC", "T2D", "UC")) 
+
+```
+
+load pre calculated linear model results 
+```{r}
+res <- read_tsv(here("results/Disease_glm_lm_results.tsv")) %>% 
+ filter(Enterotype != "ET_dysbiosis")
+```
+
+
+
+```{r}
+
+disease_dictionary <- list(
+  "T2D" = "Type 2 Diabetes",
+  "CD" = "Crohn's Disease",
+  "ADA" = "Advanced Colorectal Adenoma",
+  "CRC" = "Colorectal Cancer",
+  "T1D" = "Type 1 Diabetes",
+  "RA" = "Rheumatoid Arthritis",
+  "PD" = "Parkinson's Disease",
+  "NAA" = "Non advanced adenoma",
+  #"HIV" = "Human Immunodeficiency Virus", 
+  "VKH" = "Vogt-Koyanagi-Harada Disease",
+  "IGT" = "Impaired glucose tolerance",
+  "liver cirrhosis" = "Liver Cirrhosis", 
+  "breast cancer" = "Breast Cancer", 
+  "end-stage renal disease" = "End-stage Renal disease",
+  "atherosclerotic cardiovascular disease" = "Atherosclerotic Cardiovascular disease", 
+  "gestational diabetes mellitus" = "Gestational diabetes mellitus",
+  "myalgic encephalomyelitis/chronic fatigue syndrome" = "chronic fatigue syndrome", 
+  "schizophrenia" = "Schizophrenia", 
+  "chronic fatigue syndrom" = "Chronic Fatigue Syndrom",
+  "ankylosing spondylitis" = "Ankylosing Spondylitis",
+  "UC" = "Ulcerative colitis"
+)
+
+# Update the disease names in the dataframe
+results <- res %>%
+  mutate(disease = recode(disease, !!!disease_dictionary)) %>% 
+  mutate(p.adj = p.adjust(p_value, method = "BH"))
+
+heatmap <- results %>% 
+  mutate(disease = factor(disease, levels = results %>%
+                            filter(Enterotype == "prob_Firmicutes") %>%
+                            arrange(coefficient) %>% pull(disease) %>% unique())) %>%
+  mutate(Enterotype = factor(str_remove(.$Enterotype, "prob_"), levels = c("Prevotella", "Firmicutes", "Bact_Phoc", "ET_dysbiosis"))) 
+
+heatmap$stars <- cut(heatmap$p.adj, breaks=c(-Inf, 0.001, 0.01, 0.05, Inf), label=c("***", "**", "*", "")) 
+# we put circles for the p-values before fdr 
+heatmap$circle <- cut(heatmap$p_value, breaks=c(-Inf, 0.001, 0.01, 0.05, Inf), label = c("ooo", "oo", "o", ""))
+# we only want the circles, if the value is not significant after fdr, so stars over circles
+heatmap <- heatmap %>% 
+  mutate(circle = case_when(stars != "" & circle != "" ~ "", TRUE ~ circle)) 
+
+# heatmap with ggplot 
+heat <- ggplot(heatmap %>% 
+                 
+                 arrange(test),(aes(x=Enterotype, y = disease, fill = coefficient)))+
+  geom_tile()+
+  scale_fill_gradient2(low="#193F90", mid = "grey90", high = "#B65417", midpoint = 0 )+
+  geom_text(aes(label=stars), color = "black", size = 5, nudge_y=-0.3)+
+  geom_text(aes(label=circle), color = "black", size = 2, nudge_y=0.1)+
+  xlab("")+ylab("")+
+  facet_grid(rows=vars(test), scales = "free_y", space = "free_y", drop = TRUE)+
+    theme_publication()+
+  theme(axis.text.x = element_text(angle=45, hjust=1,vjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom")
+heat
+
+barplot <- results %>% 
+  mutate(disease = factor(disease, levels = levels(heatmap$disease))) %>%
+  ggplot(aes(x = disease, y = nSamples, fill =factor(nStudies), color = factor(nStudies)))+
+  geom_col(position = "identity")+
+  geom_text(aes(y = nSamples+110, label = paste(nCase, "/ ", nControl)), position = "identity", size = 2, color = "grey20")+
+  annotate("text",  x =1 , y = 980, label = "case / ctr", size = 3)+
+  theme_publication()+
+  scale_fill_manual(values= c("#84a98c","#F3DFC1","#E9C46A","#F4A261", "#E76F51"), name = "Number of Studies")+
+  scale_color_manual(values= c("#84a98c","#F3DFC1","#E9C46A","#F4A261", "#E76F51"))+
+  theme(axis.text.x =element_text(angle = 90, vjust = 1, hjust =1), 
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank(),
+    plot.margin = unit(c(1, 0, 0,0), "cm"),
+    legend.position = "bottom")+
+  ylab("Number of Samples")+
+  coord_flip()+
+  scale_y_continuous(expand = c(0, 0, 0.12, 0))+
+  facet_grid(rows=vars(test), scales = "free_y", space = "free_y", drop = TRUE)+
+  guides(colour = "none")
+barplot
+
+
+
+```
+
+
+
+

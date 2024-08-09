@@ -1,0 +1,236 @@
+---
+title: "Enterotypes_functional"
+author: "Jonas Richter, Marisa Keller"
+date: "2024-08-06"
+output: html_document
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(here)
+library(ggrepel)
+source(here("utils/Colors.R"))
+
+```
+
+# read
+## enterotype information
+```{r}
+# read
+enterotype = readRDS(here("data/metadata.rds"))
+# drop sample id and rename internal id to sample id
+colnames(enterotype)[1] = "sample_id"
+```
+
+## sqrt transformed compositional Kegg ortholog counts
+```{r}
+# read
+keggko_enterotype_qc_rel_sub_sqrt = fread(here("data/keggko_enterotype_qc_rel_sub_sqrt.csv"))
+```
+
+# Analysis
+## Dimensionality reduction
+
+```{r}
+## (Optional) subsample to x random samples
+#subset = keggko_enterotype_qc_rel_sub_sqrt[sample(nrow(keggko_enterotype_qc_rel_sub_sqrt), 2000),]
+
+## Intended to run on entire dataset, unhashtag:
+subset = keggko_enterotype_qc_rel_sub_sqrt
+```
+
+# MDS 
+
+```{r}
+# Calculate Bray-Curtis distance
+subset_dist = vegan::vegdist(subset, method = "bray")
+# save the distance matrix
+saveRDS(subset_dist,here("fulldata_v2/analysis/adults_filtered_gtdb/functional/keggko_enterotype_qc_rel_sub_sqrt_DIST.rds"))
+```
+
+```{r}
+# Calculate weighted MDS
+mds = vegan::wcmdscale(subset_dist, eig = TRUE, k = 5)
+```
+
+```{r}
+# Extract first 2 dimensions
+mds_df = data.frame(Dim1 = mds$points[,1], 
+                     Dim2 = mds$points[,2],
+                     Dim3 = mds$points[,3],
+                     Dim4 = mds$points[,4])
+```
+
+```{r}
+# Re-join sample id
+comp = cbind(mds_df, first_two_cols)
+```
+
+```{r}
+# merge enterotype metadata
+comp_enterotype = dplyr::left_join(comp, enterotype)
+```
+
+```{r}
+## How much variance is explained per component?
+eigenvalues = mds$eig[1:5]
+total_variance = sum(eigenvalues)
+variance_explained = eigenvalues / total_variance * 100
+
+# Create a data frame for plotting
+variance_df = data.frame(
+  Component = 1:length(variance_explained),
+  VarianceExplained = variance_explained
+)
+
+ggplot(variance_df, aes(x = Component, y = VarianceExplained)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Variance Explained by MDS Components",
+       x = "Component",
+       y = "Variance Explained (%)") +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Plot MDS dimensions
+## dim 1 & 2
+ggplot(comp_enterotype, aes(x = Dim2, y = Dim1)) +
+  geom_point(aes(color = fkm_k3), alpha = .3, size = 2) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.key.size = unit(1.5, "lines")
+  ) +
+  scale_color_manual(values = enterotype_colors )+
+  guides(color = guide_legend(override.aes = list(size = 7)))+
+  labs(color = "Enterotype")
+
+## dim 1 & 3
+ggplot(comp_enterotype, aes(x = Dim3, y = Dim1)) +
+  geom_point(aes(color = fkm_k3), alpha = .3, size = 2) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.key.size = unit(1.5, "lines")
+  ) +
+  scale_color_manual(values = enterotype_colors )+
+
+  guides(color = guide_legend(override.aes = list(size = 7)))+
+  labs(color = "Enterotype")
+
+```
+
+
+# Differential Abundance Analysis
+### convert to data frame
+
+```{r}
+subset = as.data.frame(keggko_enterotype_qc_rel_sub_sqrt)
+# extract identifier cols
+first_two_cols = subset[,c(1:2)]
+subset = dplyr::select(subset, -c("sample_id", "study_id"))
+```
+
+## Wilcoxon test
+### construct metaTable
+```{r}
+# subset metadata to samples with KO counts
+enterotype_sub = dplyr::left_join(first_two_cols,
+                                  enterotype, 
+                                  by = c("sample_id"))
+
+# make a new data.frame containing only the relevant metadata information
+metaTable = data.frame(ID = rownames(enterotype_sub),
+                       Group = enterotype_sub$fkm_k3)
+```
+### construct featureTable
+```{r}
+rownames(subset) = 1:nrow(subset)
+featTable <- as.data.frame(subset)
+```
+### pairwise wilcoxon test formula
+```{r}
+# Function to perform pairwise Wilcoxon tests with error handling
+perform_pairwise_tests <- function(featTable, metaTable, group1, group2) {
+  
+  # Initialize result matrices
+  n_features <- ncol(featTable)
+  p.val <- matrix(NA, nrow=n_features, ncol=1, dimnames=list(colnames(featTable)))
+  fc <- p.val
+  aucs.mat <- p.val
+  confidence.lower  <- p.val
+  confidence.higher  <- p.val
+  est  <- p.val
+
+  # Calculate Wilcoxon test and effect size for each feature
+  for (f in colnames(featTable)) {
+    x <- as.numeric(featTable[metaTable$Group == group1, f])
+    y <- as.numeric(featTable[metaTable$Group %in% group2, f])
+    
+    # Check for sufficient non-missing observations
+    if (length(na.omit(x)) < 2 || length(na.omit(y)) < 2) {
+      next
+    }
+    
+    # Wilcoxon test
+    tryCatch({
+      res <- wilcox.test(x, y, exact=FALSE, conf.int = TRUE)
+      p.val[f,1] <- res$p.value
+      confidence.lower[f,1] <-  if (!is.null(res$conf.int)) res$conf.int[1] else NA
+      confidence.higher[f,1] <- if (!is.null(res$conf.int)) res$conf.int[2] else NA
+      est[f,1] <- if (!is.null(res$estimate)) res$estimate else NA
+      
+      # AUC
+      roc_result <- pROC::roc(controls=y, cases=x, direction='<', ci=TRUE, auc=TRUE)
+      aucs.mat[f,1] <- roc_result$ci[2]
+      
+      # Fold Change (FC)
+      q.p <- quantile(x, probs=seq(.1, .9, .05))
+      q.n <- quantile(y, probs=seq(.1, .9, .05))
+      fc[f,1] <- sum(q.p - q.n)/length(q.p)
+    }, error = function(e) {
+      # Handle errors gracefully
+      message(paste("Error processing feature", f, ":", e$message))
+    })
+  }
+  
+  # FDR correction
+  p.adj <- data.frame(apply(p.val, MARGIN=2, FUN=p.adjust, method="fdr"), check.names = FALSE)
+  colnames(p.adj) <- "adj"
+
+  # Add fold change and AUC
+  p.adj$p.val <- p.val
+  p.adj$fc <- fc
+  p.adj$auc.mat <- aucs.mat
+  p.adj$ci.lower <- confidence.lower
+  p.adj$ci.higher <- confidence.higher
+  p.adj$estimate <- est
+
+  p.adj$log10p <- -log10(as.numeric(p.adj$adj))
+  p.adj <- as.data.frame(p.adj)
+  rownames(p.adj) <- make.names(colnames(featTable), unique=TRUE)
+
+  # Add average relative abundance for each feature
+  p.adj$rel <- colMeans(featTable)
+  
+  # Mark significant results
+  p.adj$significant <- ifelse(p.adj$adj < 0.01, "p.adj < 0.01", "not sig")
+  p.adj$species <- rownames(p.adj)
+  
+  return(p.adj)
+}
+```
+## Apply function
+```{r}
+# Perform pairwise comparisons
+result_firmicutes_vs_bact_phoc <- perform_pairwise_tests(featTable, metaTable, "Firmicutes", "Bact_Phoc")
+result_firmicutes_vs_prevotella <- perform_pairwise_tests(featTable, metaTable, "Firmicutes", "Prevotella")
+result_bact_phoc_vs_prevotella <- perform_pairwise_tests(featTable, metaTable, "Bact_Phoc", "Prevotella")
+results_Firm_vs_others <- perform_pairwise_tests(featTable, metaTable, "Firmicutes", c("Bact_Phoc", "Prevotella"))
+results_Bact_vs_others <- perform_pairwise_tests(featTable, metaTable, "Bact_Phoc", c("Firmicutes", "Prevotella"))
+results_Prev_vs_others <- perform_pairwise_tests(featTable, metaTable, "Prevotella", c("Firmicutes", "Bact_Phoc"))
+```

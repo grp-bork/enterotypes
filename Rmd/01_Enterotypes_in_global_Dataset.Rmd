@@ -1,0 +1,1028 @@
+---
+title: "Enterotypes in the global Dataset"
+author: "Marisa Keller"
+output:
+   html_document:
+    code_folding: show
+    number_sections: yes
+    smart: no
+    toc: yes
+    df_print: paged
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(ggplot2)
+library(patchwork)
+library(tidyverse)
+library(ggembl)
+library(plotly)
+library(ggpubr)
+library(ggpattern)
+library(ggExtra)
+library(cowplot)
+library(viridis)
+library(PupillometryR) # for flat violine
+library(markovchain)
+library(igraph)
+library(diagram)
+library(ggsankey)
+
+source(here("utils/Colors.R"))
+theme_set(theme_publication())
+outDir <- here("figures/")
+```
+
+# import data
+
+```{r message=FALSE, warning=FALSE}
+# taxonomic profiles
+counts <- readRDS(here("data/motusMatrix_Genuslevel_gtdb_adults_filtered.rds"))
+counts <- counts[row.names(counts)!="-1",]
+counts <- na.omit(counts)
+counts <- t(counts[rowSums(counts[, -1])>0,])
+
+# metadata
+taxonomy <- read_tsv(here("data/Taxonomy_gtdb.tsv"))
+metadata <- readRDS(here("data/metadata.rds")) 
+
+# cluster statistics
+pam_stats <- readRDS(here("results/ClusterStatistics_PamClustering.rds"))
+fkm_stats <- read_tsv(here("results/ClusterStatistics_FKMClustering.tsv"))
+
+# rarafaction analysis
+res_fkm <- read_tsv(file = here("results/Fuzzy_Rarefaction_Results.tsv"))
+res_pam <- readRDS(here("results/Pam_rarefraction_results.rds"))
+
+# dmm benchmarking 
+dmmH <- read_tsv(here("results/DMM_benchmarking_Heterogenity.tsv"))
+dmmS <- read_tsv(here("results/DMM_benchmarking_Size.tsv"))
+
+# PCoA
+pcoa.obj.adults <- readRDS(here("results/pcoa.rds")) 
+```
+
+# Correlation Bacteroides and Phocaicola
+
+```{r}
+correlation <-cor.test(counts[,"Bacteroides"], counts[,"Phocaeicola"], method = c("pearson"))
+correlation
+```
+**Figure 1**
+
+# fkm clustering 
+
+```{r message=FALSE, warning=FALSE}
+
+adults_filtered_gtdb <- res_fkm %>% filter(propStudies == 1) %>% 
+  dplyr::rename(Silhouette = position) %>% 
+  mutate(Silhouette = Silhouette +1) %>% 
+  mutate(Silhouette = factor(Silhouette, levels = unique(Silhouette)),
+         repetition = factor(repetition, levels = unique(repetition)))
+
+df.plot <- adults_filtered_gtdb %>% 
+  group_by(Silhouette) %>% 
+  mutate(mean = mean(silhouette), 
+         s.d. = stats::sd(silhouette), 
+         upper = mean + s.d., 
+         lower = mean - s.d., 
+         n = length(unique(repetition))) %>% 
+  filter(!is.na(repetition))
+
+
+p_fkm_stat <- df.plot %>% 
+  ggplot(aes(x=Silhouette, y = mean, group= repetition))+
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.01, linetype = "dashed", color = "grey10")+
+ geom_text(aes(x=5,y=0.5, label = "rep = 20", group = NA), size = 2,color = "grey10",  check_overlap = TRUE)+
+  geom_line()+
+  geom_vline(xintercept=2, color = "grey90", lty="dashed")+
+   geom_point()+
+  ylab("Silhouette")+xlab("# Clusters")
+p_fkm_stat
+```
+
+## rarefy results
+
+```{r}
+rare.plot <- res_fkm %>% ungroup() %>% 
+  mutate(propStudies=factor(propStudies)) %>%
+  select(bestK_sil, propStudies, repetition) %>% distinct %>% 
+  count(propStudies,bestK_sil) %>%
+  ggplot(aes(x=propStudies,y=bestK_sil))+
+  geom_tile(aes(fill=n))+
+  scale_fill_gradient(low = "grey90",high="salmon")+
+  geom_text(aes(label=n),color="grey10",alpha=0.5)+
+  ylab("Best number of clusters (k)\nper iteration")+
+  xlab("Proportion of studies used")+
+  theme(legend.position = "bottom", legend.key.size = unit(0.5, "cm"))+
+  labs(fill = "# of iterations")
+rare.plot
+```
+
+## compare cohorts and taxonomy
+
+```{r fig.height = 3, fig.width = 5}
+
+res.s <- fkm_stats %>% 
+  #dplyr::rename(Silhouette = position) %>% 
+  mutate(Silhouette = word(Silhouette, 2,2, sep = fixed("=")) %>% as.numeric) %>% 
+ # mutate(Silhouette = Silhouette +1) %>% 
+  mutate(Silhouette = factor(Silhouette, levels = unique(Silhouette)),
+         Rep = factor(Rep, levels = unique(Rep)))
+
+df.plot <- res.s %>% 
+  group_by(Silhouette, Dataset) %>% 
+  mutate(mean = mean(value), 
+         s.d. = stats::sd(value), 
+         upper = mean + s.d., 
+         lower = mean - s.d., 
+         n = length(unique(Rep))) %>% 
+  filter(!is.na(Rep))
+
+# DATASETS
+tmp <- df.plot %>% 
+  dplyr::filter(Dataset %in% c("fkm_adults_filtered_gtdb", "fkm_adults_all_gtdb")) %>% 
+  mutate(dataset = word(Dataset, 3,3, sep="_"),
+         dataset = factor(dataset, levels = c("filtered", "all"))) %>% 
+  ungroup() %>% 
+  droplevels()
+label <- tmp %>%  ungroup() %>%  select(Dataset, n) %>% distinct()
+  
+fkm_dataset <- 
+  tmp %>% ggplot(aes(x=Silhouette, y = mean, group= Rep, color = Dataset, fill = Dataset))+
+  geom_ribbon(aes(ymin = lower, ymax = upper, group = Dataset), alpha = 0.2, linetype = "dashed")+
+  geom_line(aes(group = Dataset))+
+  geom_vline(xintercept=2, color = "grey70", lty="dashed")+
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1),
+        legend.position = "bottom")+
+  xlab("Number of Cluster")+ylab("Silhouette Width [mean with sd]")+
+  scale_color_manual(values = c("#16697a", "#00b4d8"))+
+   scale_fill_manual(values = c("#16697a", "#00b4d8"))+
+  geom_text(aes(x=7,y=0.5,label = paste("rep =", n), group = NA), size = 2,color = "grey10", data = label, check_overlap = TRUE)
+
+fkm_dataset
+
+# TAXONOMY 
+tmp <- df.plot %>% 
+  dplyr::filter(Dataset %in% c("fkm_adults_filtered_gtdb", "fkm_adults_filtered_ncbi")) %>% 
+  mutate(taxonomy = word(Dataset, 4,4, sep = "_")) %>% 
+  mutate(Dataset = word(Dataset, 2,4, sep="_"), 
+         Dataset = factor(Dataset, levels = unique(Dataset))) %>% 
+  ungroup() %>% 
+  droplevels()
+label <- tmp %>%  ungroup() %>%  select(taxonomy, n) %>% distinct()
+
+fkm_taxonomy <- tmp %>% ggplot(aes(x=Silhouette, y = mean, group= Rep, color = taxonomy, fill = taxonomy))+
+  geom_ribbon(aes(ymin = lower, ymax = upper, group = taxonomy), alpha = 0.2, linetype = "dashed")+
+  geom_line(aes(group = taxonomy))+
+  geom_vline(xintercept=2, color = "grey70", lty="dashed")+
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1),
+        legend.position = "bottom")+
+  xlab("Number of Cluster")+ylab("Silhouette Width [mean with sd]")+
+ # facet_wrap(~taxonomy, ncol = 2)+
+  scale_color_manual(values = c("#16697a", "#a3b18a"))+
+  scale_fill_manual(values = c("#16697a", "#a3b18a"))+
+  geom_text(aes(x=7,y=0.5,label = paste("rep =", n), group = NA), size = 2,color = "grey10", data = label, check_overlap = TRUE)
+
+fkm_taxonomy
+```
+
+
+```{r fig.height = 2, fig.width =4}
+# p.ch <- pam_stats[["ch_gtdb"]] %>% 
+#   pivot_longer(cols = -nk, names_to = "dataset", values_to = "CH.index") %>% 
+#   filter(dataset == "filtered") %>% 
+#   ggplot(aes(x=nk, y = CH.index))+
+#   geom_line()+
+#   geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+#   #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+#  # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+#   geom_point()+
+#   labs(title = "CH index")+
+#   xlab("Number of Clusters")+ylab("")+
+#   theme(legend.position = "blank")+
+#   scale_x_continuous(n.breaks = 8)+
+#   scale_color_manual(values = c("#7a9e9f","#4f6367",  "#b8d8d8"))
+# 
+# p.sil <-pam_stats[["sil_gtdb"]]  %>% 
+#   pivot_longer(cols = -nk, names_to = "dataset", values_to = "Silhouette_Width") %>% 
+#   filter(dataset == "filtered") %>% 
+#   ggplot(aes(x=nk, y = Silhouette_Width))+
+#   geom_line()+  geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+#   #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+#  # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+#   geom_point()+
+#   theme(axis.title.y = element_blank(), legend.key.size = unit(0.2, "cm"))+
+#   labs(title = "Sillhouette Width")+
+#   xlab("Number of Clusters")+ylab("")+
+#   scale_x_continuous(n.breaks = 8)+
+#   scale_color_manual(values = c( "#7a9e9f","#4f6367", "#b8d8d8"))
+# 
+# ggarrange(p.ch, p.sil, nrow = 1)
+```
+
+
+# pam clustering 
+## rarefy results
+
+```{r}
+# CH index 
+rare.ch <- res_pam %>%
+  dplyr::mutate(propStudies=factor(propStudies)) %>%
+  count(propStudies,k_best_ch) %>%
+  ggplot(aes(x=propStudies,y=k_best_ch))+
+  geom_tile(aes(fill=n))+
+  scale_fill_gradient(low = "grey90",high="salmon")+
+  geom_text(aes(label=n),color="grey10",alpha=0.5)+
+  theme_publication()+
+  ylab("Best k per iteration")+
+  xlab("Proportion of studies used")+
+  theme(legend.position = "none", legend.key.size = unit(0.2, "cm"))+
+labs(fill = "# of \niterations")
+rare.ch
+
+# Silhouette
+rare.sil <- res_pam %>%
+  mutate(propStudies=factor(propStudies)) %>%
+  count(propStudies,k_best_sil) %>%
+  ggplot(aes(x=propStudies,y=k_best_sil))+
+  geom_tile(aes(fill=n))+
+  scale_fill_gradient(low = "grey90",high="salmon")+
+  geom_text(aes(label=n),color="grey10",alpha=0.5)+
+  theme_publication()+
+  theme(legend.key.size = unit(0.5, "cm"), legend.position = "bottom")+
+  ylab("Best k per iteration")+
+  xlab("Proportion of studies used")+
+  labs(fill = "# of iterations")
+rare.sil
+
+```
+
+## compare cohorts and taxonomy
+
+```{r}
+p_ch_gtdb <- pam_stats[["ch_gtdb"]] %>% 
+  pivot_longer(cols = -nk, names_to = "dataset", values_to = "CH.index") %>% 
+  filter(dataset != "healthy") %>% 
+  ggplot(aes(x=nk, y = CH.index, color = dataset))+
+  geom_line()+
+  geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+  #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+ # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+  geom_point()+
+  theme_publication()+
+  #labs(title = "CH index")+
+  xlab("Number of Clusters")+ylab("CH-Index")+
+  theme(legend.position = "blank")+
+  scale_x_continuous(breaks = 1:20)+
+  scale_color_manual(values = c("#00b4d8","#4f6367",  "#b8d8d8"))
+p_ch_gtdb
+
+p_ch_gtdb_filtered <- pam_stats[["ch_gtdb"]] %>% 
+  pivot_longer(cols = -nk, names_to = "dataset", values_to = "CH.index") %>% 
+  filter(dataset != "healthy") %>% 
+  filter(dataset == "filtered") %>% 
+  ggplot(aes(x=nk, y = CH.index, color = dataset))+
+  geom_line()+
+  geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+  #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+ # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+  geom_point()+
+  theme_publication()+
+  #labs(title = "CH index")+
+  xlab("Number of Clusters")+ylab("CH-Index")+
+  theme(legend.key.size = unit(0.2, "cm"))+
+  scale_x_continuous(breaks = 1:20)+
+  scale_color_manual(values = c("#4f6367",  "#b8d8d8"))
+p_ch_gtdb_filtered
+
+p_sil_gtdb <- pam_stats[["sil_gtdb"]]  %>% 
+  pivot_longer(cols = -nk, names_to = "dataset", values_to = "Silhouette_Width") %>% 
+  filter(dataset != "healthy") %>% 
+  ggplot(aes(x=nk, y = Silhouette_Width, color = dataset))+
+  geom_line()+  geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+  #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+ # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+  geom_point()+
+  theme_publication()+
+  theme( legend.key.size = unit(0.2, "cm"))+
+  #labs(title = "Sillhouette Width")+
+  xlab("Number of Clusters")+ylab("Silhouette Width")+
+  scale_x_continuous(breaks = 1:20)+
+  scale_color_manual(values = c( "#00b4d8","#4f6367", "#b8d8d8"))
+p_sil_gtdb
+
+p_sil_gtdb_filtered <- pam_stats[["sil_gtdb"]]  %>% 
+  pivot_longer(cols = -nk, names_to = "dataset", values_to = "Silhouette_Width") %>% 
+  filter(dataset != "healthy") %>% 
+  filter(dataset == "filtered") %>% 
+  ggplot(aes(x=nk, y = Silhouette_Width, color = dataset))+
+  geom_line()+  geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+  #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+ # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+  geom_point()+
+  theme_publication()+
+  theme(legend.key.size = unit(0.2, "cm"))+
+  #labs(title = "Sillhouette Width")+
+  xlab("Number of Clusters")+ ylab("Silhouette Width")+
+  scale_x_continuous(breaks = 1:20)+
+  scale_color_manual(values = c( "#4f6367", "#b8d8d8"))
+p_sil_gtdb_filtered
+
+p_ch_ncbi <- pam_stats[["ch_ncbi"]]%>% 
+  filter(nk != 1) %>% 
+  pivot_longer(cols = -nk, names_to = "dataset", values_to = "CH.index") %>% 
+  ggplot(aes(x=nk, y = CH.index, color = dataset))+
+  geom_line()+ geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+  #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+ # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+  geom_point()+
+  theme_publication()+
+  theme(legend.position = "blank")+
+  scale_x_continuous(breaks = 1:20)+
+  xlab("Number of Clusters")+ylab("CH-Index")+
+  scale_color_manual(values = c("#4f6367","#a3b18a",  "#b8d8d8"))
+p_ch_ncbi
+
+p_sil_ncbi <- pam_stats[["sil_ncbi"]] %>% 
+  filter(nk != 1) %>% 
+  pivot_longer(cols = -nk, names_to = "dataset", values_to = "Silhouette.width") %>% 
+  ggplot(aes(x=nk, y = Silhouette.width, color = dataset))+
+  geom_line()+ geom_vline(xintercept = 3, color = "grey70", lty = "dashed")+
+  #geom_vline(xintercept = 3, color = "grey60", lty="dashed")+
+ # geom_vline(xintercept = 2, color = "grey80", lty="dashed")+
+  geom_point()+
+  theme_publication()+ 
+  labs(color="taxonomy")+
+  theme( legend.key.size = unit(0.2, "cm"))+
+  scale_x_continuous(breaks = 1:20)+
+  xlab("Number of Clusters")+ylab("Silhouette Width")+
+  scale_color_manual(values = c("#4f6367","#a3b18a", "#ee9b00"))
+p_sil_ncbi
+```
+
+Supplementary Fig. 1: CH-index and Silhouette width for different Cohorts (A-B) and for clustering based on different genus-level taxonomies (C-D)
+
+# PCoA
+## fkm 
+k=3 fkm Cluster Assignments
+```{r}
+summary(pcoa.obj.adults)
+```
+
+```{r fig.height = 5.5, fig.width = 5.5}
+
+p <- ggplot(metadata, aes(x=A1, y=A2, color = fkm_k3, shape = fkm_k3))+
+  geom_hline(yintercept = 0, color = "grey50")+
+  geom_vline(xintercept = 0, color = "grey50")+
+  geom_point(size = 0.5, 
+             #shape = 21
+             alpha = 0.5)+
+  annotate(geom="text", x = 0.17, y = 0.23, label ="Firmicutes ET", color = "#197EA5", fontface = "bold", size = 3)+
+  annotate(geom="text", x = 0.16, y = -0.4, label ="Bact_Phoc ET", color = "#2B9348", fontface = "bold", size = 3)+
+ annotate(geom="text", x = - 0.3, y = -0.4, label ="Prevotella ET", color = "#DF6929", fontface = "bold", size = 3)+ # size = 3 for publication
+  #labs(subtitle = "PCoA | FKM Clustering | k=3")+
+  xlab("Axis 1 [15.47 %]")+ # find out about the percentage by "summary(pcoa.obj)"
+  ylab("Axis 2 [9.01 %]")+
+  scale_color_manual(values = enterotype_colors, breaks = names(enterotype_colors))+
+  scale_shape_manual(values = enterotype_shapes, breaks = names(enterotype_shapes))+
+  theme(legend.position = "none", axis.line=element_blank(),axis.text.x=element_blank(),
+        axis.text.y=element_blank(),axis.ticks=element_blank(),
+        #axis.title = element_text(size = 10),
+        plot.subtitle = element_text(vjust = -0.5, size = 12)
+       )
+  
+p3 <- ggMarginal(p, groupColour = TRUE, groupFill = TRUE, alpha =.3)
+
+p3
+```
+
+```{r fig.width = 8, fig.height=1}
+all_samples_ET <- metadata %>% 
+  count(fkm_k3) %>% 
+  unite("text", fkm_k3, n, sep = " \n n =", remove = FALSE) %>% 
+  ggplot(aes(x=1, y = n, fill = fkm_k3, label = text))+
+  geom_bar(position="stack", stat="identity", alpha = 0.8)+
+  coord_flip()+
+  theme_void()+
+  theme(legend.position = "none")+
+  scale_fill_manual(values = enterotype_colors, breaks = names(enterotype_colors))+
+  geom_text(size = 3, position = position_stack(vjust = 0.5))
+  
+all_samples_ET
+```
+
+## pam 
+k=3 Cluster Assignments
+
+```{r}
+p <- ggplot(metadata, aes(x=A1, y=A2, color = pam_k3))+
+  geom_hline(yintercept = 0, color = "grey50")+
+  geom_vline(xintercept = 0, color = "grey50")+
+  geom_point(size = 0.5, shape = 21,  alpha = 0.5)+
+ # labs(title = "PCoA | PAM Clustering | k=3")+
+  annotate(geom="text", x = 0.15, y = 0.23, label ="Firmicutes ET", color = "#197EA5", size = 2)+
+  annotate(geom="text", x = 0.16, y = -0.4, label ="Bact_Phoc ET", color = "#2B9348", size = 2)+
+  annotate(geom="text", x = - 0.3, y = -0.4, label ="Prevotella ET", color = "#DF6929", size = 2)+
+  xlab("Axis 1 [15.47 %]")+ # find out about the percentage by "summary(pcoa.obj)"
+  ylab("Axis 2 [9.01 %]")+
+  theme_publication()+
+  scale_color_manual(values = enterotype_colors, breaks = names(enterotype_colors))+
+  theme(legend.position = "none", axis.line=element_blank(),axis.text.x=element_blank(),
+        axis.text.y=element_blank(),axis.ticks=element_blank())
+  
+pam.k3 <- ggMarginal(p, groupColour = TRUE, groupFill = TRUE, alpha =.3)
+
+pam.k3
+```
+
+k=2 Cluster Assignments
+
+```{r}
+p <- ggplot(metadata, aes(x=A1, y=A2, color = pam_k2))+
+  geom_hline(yintercept = 0, color = "grey50")+
+  geom_vline(xintercept = 0, color = "grey50")+
+  geom_point(size = 0.5, shape = 21,  alpha = 0.5)+
+  #labs(title = "PCoA | PAM Clustering | k=2")+
+  annotate(geom="text", x = 0.18, y = 0.25, label ="Bact_Phoc /\nFirmicutes ET", color = "#2B9348", size =2 )+
+  annotate(geom="text", x = - 0.3, y = -0.4, label ="Prevotella ET", color = "#DF6929", size = 2)+
+  theme_publication()+
+  xlab("Axis 1 [15.47 %]")+ # find out about the percentage by "summary(pcoa.obj)"
+  ylab("Axis 2 [9.01 %]")+
+  scale_color_manual(values = enterotype_colors, breaks = names(enterotype_colors))+
+  theme(legend.position = "none", 
+        axis.line=element_blank(),axis.text.x=element_blank(),
+        axis.text.y=element_blank(),axis.ticks=element_blank())
+  
+pam.k2 <- ggMarginal(p, groupColour = TRUE, groupFill = TRUE, alpha =.3)
+
+pam.k2
+```
+
+# DDA of genera between ET
+
+## calculate DDA 
+
+first: define prevalence cutoff
+we plot the number of samples per taxa to define a suitable prevalence cut-off
+```{r}
+df <-tibble(prevalence = colSums(counts != 0), 
+       taxa = colnames(counts)) %>% 
+  arrange(desc(prevalence)) %>% 
+  mutate(taxa = factor(taxa, levels = taxa))
+
+df %>% 
+  ggplot(aes(x=taxa,y = prevalence))+
+  geom_col()+
+  theme(axis.text.x = element_blank())+
+  geom_hline(yintercept = 100, color = "orange", lty = "dashed")
+
+```
+cutoff for prevalence to 100.
+The taxa needs to be in at least 100 samples of the dataset; this is equivalent to 0.5 % of the samples 
+```{r}
+data_dda <- counts[,colnames(counts) %in% (df %>% dplyr::filter(prevalence >= 101) %>% pull(taxa))]
+```
+get only one sample per patient
+```{r}
+first_visit <- aggregate(metadata$internal_id, by =list(metadata$subject_id), FUN=dplyr::first) %>% 
+  magrittr::set_colnames(c("subject_id", "internal_id"))
+
+data_dda <- data_dda[rownames(data_dda) %in% first_visit$internal_id,]
+md_dda <- metadata %>% filter(internal_id %in% first_visit$internal_id)
+```
+
+Calculate the Wilcoxon Test
+```{r eval=FALSE, include=FALSE}
+source(here("utils/WilcoxonTest.R"))
+log.n0 = 1e-05 #species
+log.n0.func = 1e-08 #functions
+
+df.BP <- calWilcox(data_dda %>% t(), 
+          md_dda %>% dplyr::mutate(ID = internal_id) %>% tibble::column_to_rownames("internal_id") %>% 
+            dplyr::rename(status = fkm_k3), 
+          "DAA_BPvsOthers_k3", 
+          resultfolder = here::here("results/"),
+          case="Bact_Phoc", ctr=c("Prevotella", "Firmicutes_1"))
+
+df.F <- calWilcox(data_dda %>% t(), 
+          md_dda %>% dplyr::mutate(ID = internal_id) %>% tibble::column_to_rownames("internal_id")  %>% 
+          dplyr::rename(status = fkm_k3), 
+          "DAA_FvsOthers_k3", 
+          resultfolder = here::here("results/"),
+          case="Firmicutes_1", ctr=c("Prevotella", "Bact_Phoc")) 
+
+df.P <- calWilcox(data_dda %>% t(), 
+          md_dda %>% dplyr::mutate(ID = internal_id) %>% tibble::column_to_rownames("internal_id") %>% 
+          dplyr::rename(status = fkm_k3), 
+          "DAA_PvsOthers_k35", 
+          resultfolder = here::here("results/"),
+          case="Prevotella", ctr=c("Firmicutes_1", "Bact_Phoc")) 
+
+```
+
+summarize the results
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+df.dda <- bind_rows(df.BP %>% dplyr::mutate(enterotype = "Bact_Phoc") , 
+                    df.F %>% dplyr::mutate(enterotype = "Firmicutes"), 
+                    df.P %>% dplyr::mutate(enterotype = "Prevotella"))
+
+
+
+df.plot <- df.dda %>% 
+  arrange(desc(rel)) %>% 
+  mutate(species = factor(species, levels = unique(species))) %>%
+  filter(rel >= 0.05)
+
+# save the results
+#saveRDS(df.dda, here("results/DDA_betweenET.rds"))
+
+
+```
+
+## plot DDA
+```{r}
+dda <- readRDS(here("results/DDA_betweenET.rds"))
+
+taxonomy <- taxonomy %>% select(-c(onlyID, species)) %>% distinct()
+
+dda <- dda %>% left_join(taxonomy, by = c("species" = "genus")) %>% 
+  dplyr::mutate(phylum = case_when(species == "Acetatifactor.Coprococcus" ~ "Lachnospiraceae",
+                            TRUE ~ phylum))
+
+# adapt some species names 
+dda <- dda %>% 
+  mutate(species = case_when(species == "CAG.83" ~ "unclassified Oscillospiraceae", 
+                             species == "Lachnospira.CAG.196" ~ "unclassified Lachnospira",
+                                TRUE ~ species),
+         phylum = case_when(species == "unclassified Oscillospiraceae" ~ "Firmicutes", 
+                             species == "unclassified Lachnospira" ~ "Firmicutes",
+                                TRUE ~ phylum))
+enterotypes <- unique(dda$enterotype)
+```
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+dda_plots <- list()
+for(e in 1:length(enterotypes)) {
+  et <- enterotypes[[e]]
+  print(et)
+ p <-  dda %>% 
+  filter(enterotype == et) %>%
+  filter(adj < 0.01) %>%   filter(rel >= 0.1) %>% 
+  arrange(fc) %>% 
+  mutate(species = factor(species, levels =unique(.$species))) %>% 
+  ggplot(aes(x=fc, y = species, fill  = phylum)) +
+    geom_col(position = "dodge")+
+    labs(subtitle = paste(et, "ET"))+
+   xlab("fold change")+
+   scale_fill_manual(values = phyla_colors)+
+   theme(legend.position = "none", 
+         axis.title.y = element_blank())
+ print(p)
+ dda_plots[[e]] <- p
+}
+
+legend <- get_legend(ggplot(taxonomy, aes(fill= phylum))+scale_fill_manual(values=phyla_colors))
+dda
+```
+
+
+# longitudinal Analysis
+
+```{r}
+# Filter metadata for subjects with multiple timepoints
+md_time <- metadata %>% filter(!is.na(subject_id)) %>% 
+  # for each subject, count how many samples we have and filter for subjects with >= 2 samples 
+  group_by(subject_id) %>% 
+  mutate(n_samples_per_subject = n()) %>% 
+  ungroup() %>% 
+  dplyr::filter(n_samples_per_subject >=2) %>% 
+  dplyr::filter(!is.na(timepoint)) %>% 
+  # for each sample calculate the time between the sample and the first sample and remove everything above 365 days 
+  group_by(subject_id) %>% 
+  dplyr::mutate(first.visit = min(collection_date),
+                time.from.first.visit = collection_date - first.visit) %>% 
+  ungroup() %>% 
+  dplyr::filter(time.from.first.visit <= 365)
+
+tmp <- md_time %>% 
+  group_by(subject_id) 
+
+md_time %>% ungroup() %>% 
+  select(subject_id, n_samples_per_subject, studies) %>% distinct() %>% 
+  filter(n_samples_per_subject >= 6) %>% count(studies)
+
+samplesPerStudy.plot <- md_time %>% select(subject_id, n_samples_per_subject) %>% distinct() %>% count(n_samples_per_subject) %>% 
+  ggplot(aes(x=n_samples_per_subject, y = n))+
+    geom_line()+
+  geom_point(shape = 21, size = 4, fill = "white")+
+  geom_point(aes(x=89, y = 1), shape = 4, size = 4,color = "red")+
+  scale_x_continuous(n.breaks = 10)+  scale_y_continuous(n.breaks = 10)+
+  ylab("Number of Subjects")+xlab("Number of Samples per Subject")
+samplesPerStudy.plot
+```
+
+## Markov Chain Model
+
+input to markov chain model. a list of vectors with the enterotype number ordered by the timepoints for each patient.
+
+```{r}
+et_vectorlist <- md_time %>%
+  # remove the outlier with 90 samples to not get biased by this
+  filter(subject_id != "Fukuyama_2017_bowelcleansing_AAB") %>% 
+ select(subject_id, timepoint, fkm_k3) %>% 
+  dplyr::mutate(pam_k3 = case_when(fkm_k3 == "Firmicutes" ~ "Firmicutes", 
+                   TRUE ~ fkm_k3)) %>% 
+  group_by(subject_id, .add = TRUE) %>% 
+  arrange(timepoint, .by_group = TRUE) %>% 
+  select(-timepoint) %>% 
+  group_by(subject_id, .add=TRUE) %>% 
+     group_split(subject_id) %>% 
+     map(~ .x %>%
+             pull(fkm_k3))
+
+single_value_vectors <- sapply(et_vectorlist, function(x) length(unique(x)) == 1)
+
+```
+
+calulating transition matrix
+
+```{r message=FALSE, warning=FALSE}
+mcFit <- markovchainFit(et_vectorlist, method = "mle")
+
+mcDf <- as(mcFit$estimate, "data.frame") 
+```
+
+Plottin the Markov Chain Model
+
+```{r eval=FALSE, fig.height=4, fig.width=4, include=FALSE}
+tM <- mcFit$estimate@transitionMatrix %>% round(., digits = 2) %>% t()
+tM %>% as.matrix() %>% colSums
+tM <- tM[c("Bact_Phoc", "Prevotella", "Firmicutes"), c("Bact_Phoc", "Prevotella", "Firmicutes")] 
+colnames(tM) <- c("B/P ET", "P ET", "F ET")
+rownames(tM) <- c("B/P ET", "P ET", "F ET")
+
+png(file=here("figures/MarkovChain.png"), width = 13, height =12)
+diagram::plotmat(tM, curve=.05,
+                 relsize=0.5,
+                 arr.type = "simple",
+                 box.type = "rect",
+                 box.prop = 0.7,
+                 box.lwd = 1,
+                 box.size = 0.15,
+                 box.cex = 1.8,
+                 box.col = c("#2B9348", "#DF6929", "#197EA5"),
+                 shadow.size= 0,
+                 self.shiftx = c(0.23,-0.22,0),
+                 self.shifty = c(0, 0, 0.17),
+                 arr.lwd =tM*10,
+                 dtext = 0.21,
+                 arr.width = tM*10,
+                 self.lwd = diag(tM)*10, 
+                 arr.pos=0.5,
+                 cex = 1.8)
+dev.off()
+```
+
+## analysing the changes
+
+```{r}
+md_time_changes <- md_time %>%
+  # remove the outlier with 90 samples to not get biased by this
+  filter(subject_id != "Fukuyama_2017_bowelcleansing_AAB") %>% 
+  select(subject_id, timepoint, fkm_k3, internal_id, ET_dysbiosis, max_prob) %>% 
+  dplyr::mutate(fkm_k3 = case_when(fkm_k3 == "Firmicutes" ~ "Firmicutes", 
+                   TRUE ~ fkm_k3)) %>% 
+  group_by(subject_id, .add = TRUE) %>% 
+  arrange(timepoint, .by_group = TRUE) %>% 
+  group_by(subject_id, .add =TRUE) %>% 
+  mutate(next_fkm_k3 = lead(fkm_k3)) %>% # document the next enterotype
+  mutate(change = fkm_k3 != lead(fkm_k3)) %>%  # create new variable "change"
+  filter(!is.na(next_fkm_k3)) %>% 
+  unite(ET_change, fkm_k3, next_fkm_k3, remove = FALSE, sep = "_to_") %>% 
+  mutate(ET_change = factor(ET_change, levels = c("Bact_Phoc_to_Firmicutes", "Bact_Phoc_to_Prevotella", "Bact_Phoc_to_Bact_Phoc",
+                                                  "Prevotella_to_Bact_Phoc", "Prevotella_to_Firmicutes","Prevotella_to_Prevotella",
+                                                   "Firmicutes_to_Bact_Phoc", "Firmicutes_to_Prevotella", "Firmicutes_to_Firmicutes"))) %>% 
+  mutate(change = case_when(change == TRUE ~ "change", 
+                             change == FALSE ~ "no change")) %>% 
+  ungroup() %>%  group_by(ET_change) %>% 
+  mutate(number_in_each_change = n())
+```
+
+## longitudinal Examples in PCoA
+
+```{r}
+time_subjects <- md_time %>% filter(n_samples_per_subject >= 10) %>%
+  select(n_samples_per_subject, subject_id) %>% distinct() %>% pull(subject_id)
+```
+
+```{r, fig.width = 4, fig.height = 4}
+plot.list <- list()
+for(s in 1:length(time_subjects)){
+  subject <- time_subjects[[s]]
+p <- ggplot(metadata %>% filter(subject_id != subject), aes(x=A1, y=A2, color = fkm_k3))+
+  geom_hline(yintercept = 0, color = "grey50")+
+  geom_vline(xintercept = 0, color = "grey50")+
+  geom_point(size = 0.5, shape = 21, alpha = 0.2)+
+  geom_path(data = metadata %>% filter(subject_id == subject), aes(x=A1, y=A2), color = "grey30")+
+  geom_point(data = metadata %>% filter(subject_id == subject) %>% arrange(timepoint),aes(x=A1, y=A2, fill = fkm_k3), shape = 21,color = "grey30")+
+  
+  annotate(geom="text", x = 0.15, y = 0.23, label ="Firmicutes ET", color = "#197EA5", fontface = "bold")+
+  annotate(geom="text", x = 0.16, y = -0.4, label ="Bact_Phoc ET", color = "#2B9348", fontface = "bold")+
+  annotate(geom="text", x = - 0.3, y = -0.4, label ="Prevotella ET", color = "#DF6929", fontface = "bold")+
+  labs(subtitle = paste(subject, "\nPCoA k=3 | FKM Clustering"))+
+  xlab("Axis 1 [15.47 %]")+ # find out about the percentage by "summary(pcoa.obj)"
+  ylab("Axis 2 [9.01 %]")+
+  scale_color_manual(values = enterotype_colors, breaks = names(enterotype_colors))+
+  scale_fill_manual(values = enterotype_colors, breaks = names(enterotype_colors))+
+  theme(legend.position = "none", axis.line=element_blank(),axis.text.x=element_blank(),
+        axis.text.y=element_blank(),axis.ticks=element_blank(),
+        axis.title = element_text(size = 10))
+
+p
+plot.list[[s]] <- p
+}
+
+plot.list
+```
+
+# Enterotypes in single Studies
+
+```{r}
+ET_count <- metadata %>% 
+  group_by(studies) %>% 
+  mutate(SampleNumber = n()) %>% 
+  filter(SampleNumber >= 9) %>% 
+  summarise(et_count= n_distinct(fkm_k3))
+```
+
+```{r, fig.width=15, fig.height = 20}
+df <- metadata %>% 
+  filter(!is.na(fkm_k3)) %>% 
+  # calculate number of samples per study
+  select(studies, fkm_k3) %>% 
+  group_by(studies) %>% 
+  mutate(SampleNumber = n()) %>% 
+  # calculate proportion of samples in each enterotype
+  filter(SampleNumber >= 9) %>% 
+  group_by(studies, SampleNumber) %>% 
+  count(fkm_k3) %>% 
+  mutate(n_prob = n/SampleNumber) 
+  
+df <- df %>% 
+  left_join(ET_count, by = "studies")
+
+p1 <- df %>% 
+  mutate(fkm_k3 = factor(fkm_k3, levels = c("Firmicutes", "Bact_Phoc", "Prevotella"))) %>%  # arrange for order by Firmicutes
+  group_by(fkm_k3) %>% 
+  arrange(desc(n_prob), .by_group = TRUE) %>% 
+  mutate(studies = factor(studies, levels = unique(.$studies))) %>% 
+  mutate(fkm_k3 = factor(fkm_k3, levels = c("Prevotella", "Firmicutes", "Bact_Phoc"))) %>%  # arrange for order in Plot
+  ggplot(aes(x=n_prob, y = studies, fill = fkm_k3))+
+  geom_col(position = "stack", color = "white")+
+  scale_fill_manual(name= "enterotype", values = enterotype_colors)+
+  theme(legend.position = "top")+
+  xlab("Proportion of samples in each enterotype")
+p2 <- df %>% 
+  mutate(ET_count = as.factor(et_count)) %>% 
+  ggplot(aes(x=studies, y = "n", fill = ET_count))+
+  geom_tile(color = "white")+
+  scale_fill_manual(values = c("#E76F51", "#2A9D8F", "#F4A261", "#52796F"))+
+  theme(axis.text = element_blank(), 
+        axis.ticks = element_blank(), 
+        axis.title = element_blank(), 
+        legend.position = "right", 
+        legend.title = )+
+  coord_flip()
+
+p3.studies <- df %>% 
+  mutate(ET_count = as.factor(et_count)) %>% 
+ mutate(fkm_k3 = factor(fkm_k3, levels = c("Firmicutes", "Bact_Phoc", "Prevotella"))) %>%  # arrange for order by Firmicutes
+  group_by(fkm_k3) %>% 
+  arrange(desc(n_prob), .by_group = TRUE) %>% 
+  mutate(studies = factor(studies, levels = unique(.$studies))) %>% 
+  ungroup() %>% 
+  select(studies, SampleNumber) %>% distinct() %>% 
+  ggplot(aes(x=studies, y = SampleNumber))+
+  geom_col()+
+  geom_text(aes(label = SampleNumber),position = position_stack(vjust = 1), hjust = -0.1, size = 3)+
+   theme(axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank(), 
+        axis.title.y = element_blank(), 
+        legend.position = "right", 
+        legend.title = )+
+  ylab("Sample number in each study")+
+  coord_flip()
+ 
+
+
+study.p <- ggarrange(p1,p3.studies,  ncol = 2, widths = c(9,9), align = "h", common.legend = TRUE)
+study.p
+```
+proportion of enterotype classifications in each study 
+```{r}
+df.total <- metadata %>% 
+  mutate(n_samples_total = n()) %>% 
+  group_by(fkm_k3, n_samples_total) %>% 
+  count(fkm_k3) %>% 
+  mutate(sample_proportion_total = n/n_samples_total)
+  
+study.bp.df <- df %>% 
+  filter(n>=9) %>% 
+  group_by(studies) %>% 
+  mutate(max_prob = max(n_prob))
+
+study.bp<-study.bp.df %>% 
+ggplot(aes(x=fkm_k3, y = n_prob, fill = fkm_k3))+
+  geom_boxplot(outlier.color = "grey70")+
+  geom_point(data = df.total, aes(x=fkm_k3, y = sample_proportion_total), shape = 23, size = 2, fill = "grey80")+
+# geom_jitter(shape =21, aes(fill = as.factor(et_count)), width = .2, size = 1.2, alpha = 0.6)+
+  stat_compare_means(comparisons = list(c("Bact_Phoc", "Firmicutes"), c("Bact_Phoc", "Prevotella"), c("Firmicutes", "Prevotella")), 
+                     method = "wilcox.test", 
+                     label = "p.signif",
+                     vjust = 0.7,
+                     step.increase = 0.07)+
+  #scale_fill_manual(values = c("red", "blue", "grey80"))+
+  scale_fill_manual(values = enterotype_colors)+
+  xlab("")+ylab("proportion of samples per study")+
+  labs(fill = "# of \nassigned \nEnterotypes")+
+  theme(legend.position = "none", legend.key.size = unit(0.2, "cm"), axis.text.x = element_text(angle=45, hjust=1))
+study.bp
+```
+
+# Functional MDS
+```{r}
+# read data 
+comp_enterotype <- readRDS(here("results/keggko_enterotype_qc_rel_sub_sqrt_PCA_data.rds"))
+# Plot MDS dimensions
+## dim 1 & 2
+mds12 <- ggplot(comp_enterotype, aes(x = Dim2, y = Dim1)) +
+  geom_point(aes(color = fkm_k3), alpha = .3, size = 1) +
+  theme_minimal() +
+  
+  scale_color_manual(values = enterotype_colors )+
+  theme_publication()+
+  ylab("Dim 1 [45%]")+xlab("Dim 2 [28%]")+
+  theme(
+    legend.position = "none",
+  ) 
+## dim 1 & 3
+mds13 <- ggplot(comp_enterotype, aes(x = Dim3, y = Dim1)) +
+  geom_point(aes(color = fkm_k3), alpha = .3, size = 1) +
+  theme_minimal() +
+  ylab("Dim 1 [45%]")+xlab("Dim 3 [12%]")+
+  scale_color_manual(values = enterotype_colors )+
+  theme_publication()+
+    theme(
+    legend.position = "none"
+  ) 
+
+```
+
+# Alluvial Diagramm
+
+```{r}
+library("ggalluvial")
+pallu <- metadata %>%
+  filter(disease == "None reported") %>%
+  dplyr::count(fkm_k4, pam_k4, fkm_k3, pam_k3, fkm_k2, pam_k2,
+               #dmm_k3
+               ) %>% as.data.frame() %>%
+  mutate_if(is.double, as.character)
+```
+
+```{r}
+pam <- pallu %>% 
+  #mutate(pam_k3 = factor(pam_k3, levels = c("Bact_Phoc", "Firmicutes", "Prevotella"))) %>% 
+  ggplot(aes(axis1 = pam_k2, axis2 = pam_k3, axis3 = pam_k4, y = n))+
+ geom_stratum(width = 1/3,alpha =0.6 )+
+  stat_alluvium(aes(fill=pam_k3),
+                aes.bind = "flows",
+                lode.guidance = "zigzag")+
+  geom_alluvium(aes(fill=pam_k3))+
+  geom_text(stat="stratum", aes(label = after_stat(stratum)), angle = 90, size = 3)+
+  #stat_alluvium(lode.guidance = "zigzag")+
+  scale_x_discrete(limits=c("k=2", "k=3", "k=4"))+
+  scale_fill_manual(values = enterotype_colors)+
+   theme_minimal()+
+#  labs(title = "Enterotype Classification \nfor each sample \nPAM Clustering")+
+  theme(legend.position = "none",panel.grid = element_line(color = "grey80", 
+        size = 0.5), panel.grid.minor = element_blank(), 
+        axis.title.y = element_text(size = 8))+
+  ylab("Number of Samples")
+pam
+
+alluvial_pamfuzzy <- pallu %>% ggplot(aes(axis1 = fkm_k3, axis2 = pam_k3 , y = n))+
+  geom_stratum(width = 1/3,alpha =0.6 )+
+  stat_alluvium(aes(fill=fkm_k3),
+                aes.bind = "flows",
+                lode.guidance = "zigzag")+
+  geom_alluvium(aes(fill=fkm_k3))+
+  geom_text(stat="stratum", aes(label = after_stat(stratum)), angle = 90, size = 2)+
+  #stat_alluvium(lode.guidance = "zigzag")+
+  scale_x_discrete(limits=c( "FKM", "PAM" ))+
+  #theme_minimal()+
+  theme_publication()+
+  ylab("Number of Samples")+
+  scale_fill_manual(values = enterotype_colors)+
+  #labs(title = "Enterotype Classification \nfor each sample")+
+  theme(legend.position = "none",panel.grid = element_line(color = "grey80", 
+        size = 0.5), panel.grid.minor = element_blank(), 
+        axis.title.y = element_text(size = 8))
+  
+   alluvial_pamfuzzy
+```
+
+
+# Comparing with Frioux 2023 and Tap 2023
+```{r}
+comp.data <- readRDS(here("data/Entertoypes_Frioux_Tap_mapping.rds"))
+```
+
+```{r}
+alpha.vector <- vctrs::vec_rep_each(comp.data %>% 
+  filter(!is.na(branch)) %>% filter(!is.na(ES)) %>% pull(ET_dysbiosis),3)
+sankey.all <- comp.data %>% 
+  filter(!is.na(branch)) %>% filter(!is.na(ES)) %>% 
+  dplyr::rename(Enterotypes = fkm_k3, `Tap et al. 2023` = branch, `Frioux et al. 2023` = ES) %>% 
+  make_long(`Tap et al. 2023`,Enterotypes, `Frioux et al. 2023`)
+sankey.plot <- sankey.all %>%
+
+ggplot(
+       aes(x = x, 
+               next_x = next_x, 
+               node = node, 
+              next_node = next_node, 
+               fill = factor(node),
+               label = node)) +
+  geom_sankey(flow.alpha = 0.5,
+              node.color = 1, na.rm = TRUE) +
+  geom_sankey_label(size = 3, color = 1, fill = "white", alpha = 0, hjust = 1.25) +
+  theme_sankey(base_size = 12)+
+  scale_alpha_identity()+
+  scale_fill_manual(values = c("#ffd166", "#2B9348","#2B9348","#ffd166",  "#197EA5", "#197EA5","#DF6929",
+                               "#2B9348","#2B9348","#2B9348","#197EA5",
+                                "#DF6929", "#DF6929", "#197EA5","#197EA5"))+
+  theme(legend.position = "none")+
+  xlab("")
+
+sankey.plot
+```
+
+
+
+```{r}
+alpha.vector <- vctrs::vec_rep_each(comp.data %>% pull(ET_dysbiosis),3)
+sankey.all <- comp.data %>% 
+  dplyr::rename(Enterotypes = fkm_k3, `Tap et al. 2023` = branch, `Frioux et al. 2023` = ES) %>% 
+  make_long(`Tap et al. 2023`,Enterotypes, `Frioux et al. 2023`)
+sankey.all.plot <- sankey.all %>%
+
+ggplot(
+       aes(x = x, 
+               next_x = next_x, 
+               node = node, 
+              next_node = next_node, 
+               fill = factor(node),
+               label = node)) +
+  geom_sankey(flow.alpha = 0.5,
+              node.color = 1, na.rm = TRUE) +
+  geom_sankey_label(size = 3, color = 1, fill = "white", alpha = 0, hjust = 1.25) +
+  theme_sankey(base_size = 12)+
+  scale_alpha_identity()+
+  scale_fill_manual(values = c("#ffd166", "#2B9348","#2B9348","#ffd166",  "#197EA5", "#197EA5","#DF6929",
+                               "#2B9348","#2B9348","#2B9348","#197EA5",
+                                "#DF6929", "#DF6929", "#197EA5","#197EA5"))+
+  theme(legend.position = "none")+
+  xlab("")
+
+sankey.all.plot
+```
+
+```{r}
+Dysbiosis.change <- comp.data %>% 
+  filter(!is.na(branch)) %>% filter(!is.na(ES)) %>% 
+  mutate(Change = case_when(type.change.x == "change" & type.change.y == "change" ~ "3 types",
+                            type.change.x == "change" ~ "2 types", 
+                            type.change.y == "change" ~ "2 types",
+                            type.change.x == "no change" & type.change.y == "no change" ~ "1 type", 
+                            TRUE ~as.character(NA))) %>% 
+  mutate(Change = factor(Change, levels = c("1 type", "2 types", "3 types"))) %>% 
+  ggplot(aes(y=max_prob, x = Change, fill = Change))+
+  geom_boxplot(color= "grey20", varwidth = TRUE, alpha = 0.5,position= position_dodge(width = 0.2))+
+  scale_fill_manual(values = c("#ffce1f","#D17EC3", "#aa3e98"))+
+  ggembl::theme_publication()+
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust =1))+ 
+  stat_compare_means(comparisons = list(c("1 type", "3 types"), 
+                                        c("1 type", "2 types"), 
+                                        c("3 types", "2 types")), aes(label = after_stat(p.signif)), vjust = 0.4)+
+  ylab("classification strength")+xlab("sample classified into")
+
+Dysbiosis.change
+
+```

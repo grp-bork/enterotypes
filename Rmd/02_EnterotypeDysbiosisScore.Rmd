@@ -1,0 +1,277 @@
+---
+title: "Enterotype Dysbiosis Score"
+author: "Marisa Keller"
+output:
+   html_document:
+    code_folding: show
+    number_sections: yes
+    smart: no
+    toc: yes
+    df_print: paged
+    toc_float: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+library(here)
+library(tidyverse)
+library(ggplot2)
+library(ggembl)
+library(ggridges)
+library(PupillometryR)
+library(ggpubr)
+library(viridis)
+
+theme_set(theme_publication())
+source(here("utils/Colors.R"))
+```
+
+import data
+```{r message=FALSE, warning=FALSE}
+metadata <- readRDS(here("data/metadata.rds")) 
+counts <- readRDS(here("data/motusMatrix_Genuslevel_gtdb_adults_filtered.rds"))
+# add dysbiosis score calculated by Lloyd-Price et al. 2019
+dScore <- read_tsv(here("data/LP_dysbiosis_index_data.tsv"))
+```
+
+define disese and healthy group
+```{r}
+metadata <- metadata %>% 
+  left_join(dScore, by = "internal_id") %>% 
+    mutate(is.diseased = case_when(disease == "None reported" ~ "healthy subjects", 
+                                 disease != "None reported" ~ "patients"),
+           is.diseased = case_when(is.na(disease) ~ "unknown disease status", TRUE ~ is.diseased),
+           fkm_k3 = factor(fkm_k3, levels = c("Prevotella", "Firmicutes", "Bact_Phoc"))) #%>% 
+  # dplyr::mutate(is.diseased = factor(is.diseased, levels = c("healthy subjects","unknown disease status", "patients"))) %>% 
+  # dplyr::mutate(fkm_k3_dys = case_when(is.dysbiosis == "dysbiosis" ~ "dysbiosis", TRUE ~ fkm_k3))
+```
+
+
+# Enterotype Dysbiosis Score
+
+## PCoA with classification strength 
+```{r}
+pprob <- ggplot(metadata, aes(x=A1, y=A2, color = max_prob))+
+  geom_hline(yintercept = 0, color = "grey50")+
+  geom_vline(xintercept = 0, color = "grey50")+
+  geom_point(size = 1, shape = 16)+
+  #geom_density_2d(color = "green")+
+#  labs(subtitle = "PCoA | FKM Clustering | k=3")+
+  xlab("Axis 1 [15.47 %]")+ # find out about the percentage by "summary(pcoa.obj)"
+  ylab("Axis 2 [9.12 %]")+
+  scale_color_viridis(begin = 0, end= 1, option = "inferno", name = "Classification\nStrength")+
+  #scale_color_gradientn(colors = c("#111962", "#193F90", "#B65417", "orange", "#EBCF3E"), name = "classification \nstrength")+
+  theme(legend.position = c(0.1,0.75),
+        axis.line=element_blank(),axis.text.x=element_blank(),
+        axis.text.y=element_blank(),axis.ticks=element_blank(),
+        axis.title = element_text(size = 10)
+        #plot.margin = margin(2,0,0,0, unit = "cm")
+        )
+  
+pprob
+```
+
+
+
+# ET-dysbiosis Score by ET
+```{r, fig.height = 3, fig.width=7}
+
+ptest <- metadata %>% 
+  group_by(fkm_k3) %>% summarize(p.value = kruskal.test(ET_dysbiosis ~ is.diseased )$p.value) %>% 
+  mutate(signif = case_when(between(p.value, 0.05, 0.01) ~ "*", 
+                            between(p.value, 0.01, 0.001) ~ "**", 
+                            p.value < 0.001 ~ "***"))
+ptest 
+
+p.et.dys.single <- metadata %>% 
+ filter(is.diseased != "unknown disease status") %>% droplevels() %>% 
+  ggplot(aes(y=ET_dysbiosis, x = fkm_k3))+
+ geom_flat_violin(aes(fill = is.diseased), position = position_nudge(x=.2, y=0), alpha = 0.5)+
+  geom_boxplot(width = 0.2, color= "grey20", alpha = 0.5,position= position_dodge(width = 0.2), aes(fill = is.diseased))+
+  scale_fill_manual(values = disease_colors)+
+  theme(legend.position =  "none")+
+ geom_text(data = ptest, aes(x = c(1,2,3), y = c(1.01,1.01,1.01), label = signif))+
+
+  xlab("Enterortype")+
+  ylab("")
+
+
+p2 <- metadata %>% 
+  filter(is.diseased != "unknown disease status") %>% 
+  ggplot(aes(x=ET_dysbiosis, y = is.diseased, fill = is.diseased))+
+  geom_boxplot(alpha = 0.5)+
+  theme_publication()+
+  scale_fill_manual(values = disease_colors)+
+  stat_compare_means(comparisons= list(c("healthy subjects", "patients")), aes(label = after_stat(p.signif)), vjust = 0.4)+
+  xlab("Enterotype based Dysbiosis Score")+ylab("")+
+  theme(legend.position = c(2.3, 0.14),
+        legend.background = element_blank(),
+        legend.key.size = unit(0.5, "cm"),
+        legend.text = element_text(size = 8),
+        legend.title = element_blank())+
+  coord_flip()
+
+```
+
+
+# ETD for each disease
+```{r}
+disease_dictionary <- list(
+  "T2D" = "Type 2 Diabetes",
+  "CD" = "Crohn's Disease",
+  "ADA" = "Advanced Colorectal Adenoma",
+  "CRC" = "Colorectal Cancer",
+  "T1D" = "Type 1 Diabetes",
+  "RA" = "Rheumatoid Arthritis",
+  "PD" = "Parkinson's Disease",
+  "NAA" = "Non advanced adenoma",
+  "VKH" = "Vogt-Koyanagi-Harada Disease",
+  "IGT" = "Impaired glucose tolerance",
+  "liver cirrhosis" = "Liver Cirrhosis", 
+  "breast cancer" = "Breast Cancer", 
+  "end-stage renal disease" = "End-stage Renal disease",
+  "atherosclerotic cardiovascular disease" = "Atherosclerotic Cardiovascular disease", 
+  "gestational diabetes mellitus" = "Gestational diabetes mellitus",
+  "myalgic encephalomyelitis/chronic fatigue syndrome" = "chronic fatigue syndrome", 
+  "schizophrenia" = "Schizophrenia", 
+  "chronic fatigue syndrom" = "Chronic Fatigue Syndrom",
+  "ankylosing spondylitis" = "Ankylosing Spondylitis",
+  "UC" = "Ulcerative colitis"
+)
+
+metadata <- metadata %>% 
+  mutate(disease = recode(disease, !!!disease_dictionary))
+EDS_healhty <- metadata %>% 
+  filter(is.diseased == "healthy subjects") %>% 
+  pull(ET_dysbiosis)
+EDS_healthy_median <- EDS_healhty %>% 
+  median()
+
+
+perform_test <- function(disease_values) {
+  wilcox.test(disease_values, EDS_healhty)$p.value
+}
+
+p_values <- tapply(metadata$ET_dysbiosis, metadata$disease, perform_test) %>% 
+  as.data.frame() %>% magrittr::set_colnames("p.value") %>% 
+  rownames_to_column("disease") %>% 
+  mutate(p.adj = p.adjust(p.value,method =  "BH"))
+p_values$stars <- cut(p_values$p.adj, breaks=c(-Inf, 0.001, 0.01, 0.05, Inf), label=c("***", "**", "*", "")) 
+
+n_samples <- metadata %>%
+  count(disease) %>% 
+  filter(!is.na(disease))
+
+plot_each_disease <- metadata %>% 
+  group_by(disease) %>% 
+  filter(!is.na(disease)) %>% 
+  mutate(EDS_mean_disease = mean(ET_dysbiosis)) %>% 
+  arrange(EDS_mean_disease) %>% 
+  mutate(disease = factor(disease, levels = unique(.$disease))) %>% 
+  ggplot(aes(x=ET_dysbiosis, y = disease))+
+  geom_boxplot(alpha = 0.5, aes(fill = is.diseased))+
+  geom_vline(xintercept = EDS_healthy_median, color = "#ef7a1a")+
+  geom_text(data = p_values, aes(x=0, y = disease, label = stars))+
+  theme_publication()+
+  scale_fill_manual(values = disease_colors)+
+  annotate("text", x =0.35, y = 33,  size = 2, label = "meadian healthy subjects", color = "#ef7a1a")+
+  xlab("Enterotype based Dysbiosis Score")+ylab("")+
+  theme(legend.position = "none")+
+  geom_text(data = n_samples, aes(label = paste("n=", n), y = disease), x = 1.05, size =2, color = "black")+
+  xlim(0, 1.1)
+
+       
+plot_each_disease
+ 
+```
+
+
+# ET-Dysbiosis vs. Lloyd-Dysbiosis
+
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+ 
+metadata %>%  
+  ggplot(aes(x=activity_index, y = ET_dysbiosis))+
+  geom_point(alpha = 0.03, color = "grey50")+
+  geom_smooth(color = "black", method = "lm")+
+  geom_density_2d()+
+  ggpubr::stat_cor(color="black", label.y.npc = 0.01, size = 2)+
+    xlab(" ")+
+  ylab("")+
+  labs(subtitle = "All Samples")+
+  theme_publication()
+
+metadata %>% 
+  filter(fkm_k3 == "Prevotella") %>% 
+  ggplot(aes(x=activity_index, y = ET_dysbiosis))+
+  geom_point(alpha = 0.03, aes(color = fkm_k3))+
+  geom_smooth(color = "black", method = "lm")+
+  ggpubr::stat_cor(color="black", label.y.npc = 0.01, size = 2)+  
+    theme_publication()+
+  theme(legend.position = "none")+
+  scale_color_manual(values = enterotype_colors)+
+  xlab("")+ylab("")+labs(subtitle ="Prevotella")
+
+metadata %>% 
+  filter(fkm_k3 == "Bact_Phoc") %>% 
+  ggplot(aes(x=activity_index, y = ET_dysbiosis))+
+  geom_point(alpha = 0.03, aes(color = fkm_k3))+
+  geom_smooth(color = "black", method = "lm")+
+  ggpubr::stat_cor(color="black", label.y.npc = 0.01, size = 2)+  
+    theme_publication()+
+  theme(legend.position = "none")+
+  scale_color_manual(values = enterotype_colors)+
+  xlab("")+ylab("")+labs(subtitle = "Bact_Phoc")
+
+metadata %>% 
+  filter(fkm_k3 == "Firmicutes") %>% 
+  ggplot(aes(x=activity_index, y = ET_dysbiosis))+
+  geom_point(alpha = 0.03, aes(color = fkm_k3))+
+  geom_smooth(color = "black", method = "lm")+
+  ggpubr::stat_cor(color="black", label.y.npc = 0.01, size = 2)+  
+    theme_publication()+
+  theme(legend.position = "none")+
+  scale_color_manual(values = enterotype_colors)+
+  xlab("")+ylab("")+labs(subtitle= "Firmicutes")
+
+
+```
+
+## correlation with meldScore 
+```{r}
+qin.data <- metadata %>% filter(studies == "Qin_2014_liver_cirrhosis")
+qin.extra <- readRDS(here("data/Qin_2014_meld.rds"))
+
+
+Qin <- qin.data %>% left_join(qin.extra, by = c("internal_id"="ena_ers_sample_id"))
+
+qin.correlation.plot <- Qin %>% 
+  ggplot(aes(x=ET_dysbiosis, y= as.numeric(MELD)))+
+  geom_point()+
+  stat_cor(method="spearman")+
+  geom_smooth(method = "lm", color = "grey20")+
+  xlab("Enterotype Dysbiosis Score (EDS)")+ylab("Liver Disease Severity [meld score]")
+qin.correlation.plot
+```
+
+# ET-Dysbiosis vs. Shannon 
+
+
+```{r  fig.width = 10, fig.height  = 3}
+
+metadata %>%  
+  ggplot(aes(x=Shannon, y = ET_dysbiosis))+
+  geom_point(alpha = 0.3, color = "grey30")+
+#  facet_wrap(~Cluster_k3,ncol=2 )+
+  geom_smooth(color = "black", method ="lm")+
+  geom_density_2d()+
+  ggpubr::stat_cor(color="black")+
+    xlab("")+
+  ylab("Enterotype based Dysbiosis Score")+
+  labs(subtitle = "All Samples")
+
+```
+
+
