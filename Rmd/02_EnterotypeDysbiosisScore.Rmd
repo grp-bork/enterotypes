@@ -275,3 +275,165 @@ metadata %>%
 ```
 
 
+# EDS in RIFSYS cohort 
+
+the sample-wise clinical data for the RIFSYS cohort is accessible for the authors through the MICROB-PREDICT consortium but cannot be made publicly available due to general data protection laws (GDPR). Please refer to the original publication for accessing the clinical data. 
+
+```{r eval=FALSE, include=FALSE}
+et <- read_tsv(here("manuscript/results/EnterotypeAssignment_fuzzyClustering_k3_Patel_2020_RIFSYS.tsv"))
+data <- et %>% left_join(ids, by =c("sample_id" = "Sample")) %>% 
+  left_join(clinData, by ="ID")
+```
+
+
+Correlation with change in Neutrophil Oxidative Burst
+```{r eval=FALSE, include=FALSE}
+rifsys.plot <- data %>%  
+  filter(!is.na(GROUP) & timepoint == "d01") %>% 
+  mutate(Log2ChangeNtrphlBrst30 = log2(Out30NtrphlBrst/OutNtrphlBrst)) %>% 
+  ggplot(aes(x=Enterotype_Dysbiosis_Score, y = Log2ChangeNtrphlBrst30))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  stat_cor(method = "kendall")
+
+rifsys.single.plot <- data %>%  
+  filter(!is.na(GROUP) & timepoint == "d01") %>% 
+  mutate(Log2ChangeNtrphlBrst30 = log2(Out30NtrphlBrst/OutNtrphlBrst)) %>% 
+  ggplot(aes(x=Enterotype_Dysbiosis_Score, y = Log2ChangeNtrphlBrst30))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  stat_cor(method = "kendall")+
+  facet_wrap(~GROUP)
+```
+
+
+# EDS in GALAXY cohort
+
+the clinical data and the outcome for the GALAXY cohort are accessible to the authors through the GALAXY/MicrobLiver consortium but cannot be made publicly available due to general data protection laws (GDPR).
+The script which was used to calculate and visualize the results is shown below
+
+## Difference between people progressing and stable?
+
+```{r, fig.width = 4, fig.height=5}
+# outcome file is not available due to GDPR
+
+meta.galaxy <- metadata.galaxy %>% filter(studies == "galaxy") %>% distinct() %>% 
+  mutate(id = as.numeric(str_remove_all(.$internal_id, "ALD"))) %>% 
+  filter(!is.na(id)) # remove al HP
+table(meta.galaxy$id %in% outcome$id)
+meta.galaxy <- left_join(meta.galaxy, outcome)
+
+meta.galaxy <- meta.galaxy %>% 
+  filter(!is.na(fu_te_cat)) %>% 
+  mutate(progression = case_when(fu_te_cat %in% c("Improve", "Stable") ~ "no", 
+                                 fu_te_cat == "Progresses" ~ "yes", 
+                                 TRUE ~ as.character(NA)))
+  
+  
+galaxy.plot <- meta.galaxy %>% 
+  ggplot(aes(x=progression, y = ET_dysbiosis))+
+  geom_flat_violin(aes(fill = progression), position = position_nudge(x=.2, y=0), alpha = 0.5)+
+  geom_boxplot(width = 0.2, color= "grey20", alpha = 0.5,position= position_dodge(width = 0.2), aes(fill = progression))+
+  scale_fill_manual(values = c("#ffce1f", "#aa3e98"))+
+  stat_compare_means(comparisons = list(c("yes", "no")), 
+                     method = "wilcox.test",
+                     label = "p.signif")+
+  theme(legend.position = "none")+
+  xlab("Disease progression")+ylab("Enterotype Dysbiosis Score")
+
+```
+
+
+## Kaplan Meier for GALAXY death
+
+```{r fig.height = 6, fig.width = 6}
+library(survival) 
+library(survminer)
+
+galaxy.km <- meta.galaxy %>% 
+  filter(censoring_reason != "Lost to follow-up") %>% 
+  select(id,subject_id, internal_id, ET_dysbiosis, incl, censoring_date, death) %>% distinct() %>% 
+  mutate(survival_time = censoring_date - incl, 
+         event = case_when(death == "Yes" ~ 1, 
+                           death == "No" ~ 0, 
+                           TRUE ~NA )) %>% 
+     mutate(is.dysbiosis = case_when(ET_dysbiosis >= 0.77 ~ "high", 
+                                  ET_dysbiosis < 0.77 ~ "low")) 
+
+# with same sized groups (using median of ET_Dysbiosis in the ALD cohort as cutoff)
+
+treshhold.equal <- median(meta.galaxy$ET_dysbiosis)
+galaxy.km <- galaxy.km %>% 
+ mutate(dysbiosis.group = case_when(ET_dysbiosis >= treshhold.equal ~ "high", 
+                                  ET_dysbiosis < treshhold.equal ~ "low")) 
+
+  
+surv_object <- Surv(time = galaxy.km$survival_time, event = galaxy.km$event)
+
+fit1 <- survfit(surv_object ~ dysbiosis.group, data = galaxy.km)
+kaplan.dysbiosis <- ggsurvplot(fit1, data = galaxy.km, pval = TRUE ,conf.int=TRUE, combine = TRUE, risk.table=TRUE, palette = c("#723c70","#E9C46A"))
+kaplan.dysbiosis$plot <- kaplan.dysbiosis$plot + theme(legend.position = "none")
+kaplan.dysbiosis
+
+```
+
+## Kaplan Meier with EDS and TE 
+```{r, fig.width=8, fig.height=8}
+
+# with cutoff to have equal sized groups (meadian of TE values) 
+treshhold.equal.te <- median(galaxy.km.clinical$te, na.rm = TRUE) # median is 7.35
+galaxy.km.clinical <- galaxy.km.clinical %>% 
+ mutate(te.group = case_when(te >= treshhold.equal.te ~ "high", 
+                                  te < treshhold.equal.te ~ "low"))
+
+  
+surv_object <- Surv(time = galaxy.km.clinical$survival_time, event = galaxy.km.clinical$event)
+
+fit1 <- survfit(surv_object ~ te.group + dysbiosis.group, data = galaxy.km.clinical)
+kaplan.dysbiosis <- ggsurvplot(fit1, data = galaxy.km.clinical, pval = TRUE ,conf.int=FALSE, risk.table=TRUE, palette = c("#B5838D", "#723c70", "#E9C46A", "#ffa62b"))
+kaplan.dysbiosis$plot <- kaplan.dysbiosis$plot + theme(legend.position = "none")
+kaplan.dysbiosis
+
+```
+
+# EDS in MICROB-PREDICT cohort 
+
+The time to death cannot be publicly available due to GDPR regulations.
+
+## Kaplan Meier with EDS
+```{r}
+md.public <- read_tsv(here("data/MICROB-PREDICT_sample_data.tsv")) 
+treshhold.equal <- median(md.public$ET_dysbiosis)
+md.public <- md.public %>% 
+  mutate(is.dysbiosis.equal = case_when(ET_dysbiosis >= treshhold.equal ~ "high", 
+                                        ET_dysbiosis <= treshhold.equal ~ "low"))
+
+# surv_object <- Surv(time = md.public$time_to_death, event = md.public$mort_90d)
+
+fit1 <- survfit(surv_object ~ is.dysbiosis.equal, data = md.public)
+kaplan.dysbiosis <- plot <- ggsurvplot(fit1, data = md.public, pval = TRUE ,conf.int=TRUE, risk.table=TRUE, palette = c( "#723c70", "#E9C46A"))
+kaplan.dysbiosis$plot <- kaplan.dysbiosis$plot + theme(legend.position = "none")
+kaplan.dysbiosis
+```
+
+## Kaplan Meier with EDS and MELD
+```{r}
+treshold.meld <-median(md.public$meld)
+treshold.eds <-median(md.public$ET_dysbiosis)
+md.public <- md.public %>% 
+  mutate(meld.group = case_when(meld >= treshold.meld ~ "high", 
+                                  meld < treshold.meld ~ "low"), 
+         dysbiosis.group = case_when(ET_dysbiosis >= treshold.eds ~ "high", 
+                                     ET_dysbiosis < treshold.eds ~ "low")) 
+
+
+surv_object <- Surv(time = md.public$time_to_death, event = md.public$mort_90d)
+
+fit1 <- survfit(surv_object ~ meld.group + dysbiosis.group, data = md.public)
+
+kaplan.dysbiosis <- ggsurvplot(fit1, data = md.public, pval = TRUE ,conf.int=FALSE, risk.table=TRUE, palette = c("#B5838D", "#723c70", "#E9C46A", "#ffa62b"), legend = "right")
+kaplan.dysbiosis$plot <- kaplan.dysbiosis$plot + theme(legend.position = "none")
+kaplan.dysbiosis
+```
+
+

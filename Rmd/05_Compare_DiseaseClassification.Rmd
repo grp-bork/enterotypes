@@ -1,0 +1,312 @@
+---
+title: "Taxonomic vs. EDS Disease diagnostic"
+author: "Marisa Keller"
+output:
+   html_document:
+    code_folding: show
+    number_sections: yes
+    smart: no
+    toc: yes
+    df_print: paged
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(tidyverse)
+library(ggplot2)
+library(lmerTest)
+library(ggpubr)
+library(ggembl)
+library(SIAMCAT)
+
+theme_set(theme_presentation())
+source(paste0(here("manuscript/utils/Colors.R")))
+```
+
+## import data 
+```{r}
+
+motus <- readRDS(here("fulldata_v2/data/processed/adults_filtered_gtdb/motusMatrix_Genuslevel_gtdb_adults_filtered.rds"))
+motus <- readRDS(paste0(here(), "/fulldata_v2/data/processed/combined_motus_rel.rds"))
+# for associations
+taxonomy <- read_tsv(here("manuscript/data/Taxonomy_gtdb.tsv"))
+metadata <- readr::read_tsv(here("manuscript/data/metadata_adults_filtered_withEnterotypes.tsv"))
+```
+
+
+## prepare data
+```{r}
+# We need to remove studies that do not have case and control 
+case_ctr_studies <- metadata %>% summarize(studies, disease) %>% distinct() %>% group_by(studies) %>% mutate(how_many_group = n()) %>% 
+  filter(studies != "Vincent_2016") %>% #we remove Vincent_2016 because they have two groups (CDI and hospitalized), but no control cases
+  filter(how_many_group >= 2) %>% 
+  pull(studies)
+
+
+meta.ind <- metadata %>% filter(studies %in% case_ctr_studies)
+motus.ind <- motus[, colnames(motus) %in% metadata$internal_id]
+
+# make correct disease names 
+disease_dictionary <- list(
+  "T2D" = "Type 2 Diabetes",
+  "CD" = "Crohn's Disease",
+  "ADA" = "Advanced Colorectal Adenoma",
+  "CRC" = "Colorectal Cancer",
+  "T1D" = "Type 1 Diabetes",
+  "RA" = "Rheumatoid Arthritis",
+  "PD" = "Parkinson's Disease",
+  "NAA" = "Non advanced adenoma",
+  #"HIV" = "Human Immunodeficiency Virus", 
+  "VKH" = "Vogt-Koyanagi-Harada Disease",
+  "IGT" = "Impaired glucose tolerance",
+  "liver cirrhosis" = "Liver Cirrhosis", 
+  "breast cancer" = "Breast Cancer", 
+  "end-stage renal disease" = "End-stage Renal disease",
+  "atherosclerotic cardiovascular disease" = "Atherosclerotic Cardiovascular disease", 
+  "gestational diabetes mellitus" = "Gestational diabetes mellitus",
+  "myalgic encephalomyelitis/chronic fatigue syndrome" = "chronic fatigue syndrome", 
+  "schizophrenia" = "Schizophrenia", 
+  "chronic fatigue syndrom" = "Chronic Fatigue Syndrom",
+  "ankylosing spondylitis" = "Ankylosing Spondylitis",
+  "UC" = "Ulcerative colitis"
+)
+
+meta.ind <- meta.ind %>% 
+  filter(!is.na(disease)) %>% 
+  filter(disease != "Kaeasaki disease") %>% 
+   mutate(disease = recode(disease, !!!disease_dictionary)) %>% 
+  mutate(disease = case_when(disease == "None reported" ~ "Control", TRUE ~ disease))
+
+disease.list <- meta.ind %>% filter(disease != "Control") %>% pull(disease) %>% unique()
+```
+
+# AUCs for EDS based disease classification 
+```{r eval=FALSE, include=FALSE}
+library(pROC)
+
+auroc.eds <-tibble(disease = character(), 
+                   AUC_eds = numeric())
+for(i in disease.list){
+  print(i)
+  # filter data for the samples for one disease
+  meta.train <- meta.ind %>% filter(studies %in% c(meta.ind %>% filter(disease == i) %>% 
+                                                     pull(studies) %>% unique())) %>% 
+    filter(disease %in% c(i, "Control")) %>% 
+    # order the levels for order in the model 
+    mutate(disease.numeric = case_when(disease == "Control" ~ 0, 
+                                       disease == i ~ 1)) %>% 
+    as.data.frame()
+  
+  
+  auc.eds <- pROC::roc(meta.train, response = disease.numeric, predictor = ET_dysbiosis)
+  # save the results 
+  tmp.results <- tibble(disease = i, 
+                        AUC_eds=round(auc(auc.eds),3)
+  )
+  auroc.eds <- bind_rows(auroc.eds, tmp.results)
+}
+
+auroc.eds
+
+saveRDS(auroc.eds, here("manuscript/results/Disease_diagnosis_EDS_based_AUROC.rds"))
+```
+
+
+# SIAMCAT with taxonomic profile 
+```{r eval=FALSE, include=FALSE}
+# create tibble to store all the predictions
+auroc.tax <- tibble(disease = character(), 
+                    AUC_taxonomic = double(),
+                  nStudies = numeric(), 
+                  nSamples = numeric(),
+                  nSubjects = numeric(),
+                  multipleSubjects = logical(), 
+                  nCase = numeric(), 
+                  nControl = numeric()
+                  )
+
+# and a list to save the trained SIAMCAT objects
+#i="Liver Cirrhosis" # code testing
+sc.list <- list()
+for (i in disease.list){
+  print(i)
+  # filter data for the samples for one disease
+  meta.train <- meta.ind %>% filter(studies %in% c(meta.ind %>% filter(disease == i) %>% 
+                                                     pull(studies) %>% unique())) %>% 
+    filter(disease %in% c(i, "Control")) %>% 
+    # order the levels for order in the model 
+    mutate(disease = factor(disease, levels = c("Control", i))) %>% 
+    as.data.frame()
+  
+  rownames(meta.train) <- meta.train$internal_id
+  
+  feat <- motus.ind[,colnames(motus.ind) %in% meta.train$internal_id] 
+  
+  # create SIAMCAT object
+  sc.obj.train <- siamcat(feat=feat, meta=meta.train, 
+                          label='disease', case=i)
+  # normalize features
+  sc.obj.train <- normalize.features(sc.obj.train, norm.method = 'log.std',
+                                     norm.param=list(log.n0=1e-05, sd.min.q=0),feature.type = 'original')
+  
+  # do we have multiple samples per subject? 
+  if(meta.train %>% pull(subject_id) %>% unique() %>% length() == nrow(meta.train)){
+    # Create data split
+    sc.obj.train <- create.data.split(sc.obj.train,
+                                      num.folds = 5, num.resample = 5)
+  } else {
+    sc.obj.train <- create.data.split(sc.obj.train, 
+                                      num.folds = 5, num.resample = 5, 
+                                      inseparable = 'subject_id')
+  }
+    # train LASSO model
+    sc.obj.train <- train.model(sc.obj.train, method='lasso_ll')
+    
+    sc.obj.train <- make.predictions(sc.obj.train)
+    sc.obj.train <- evaluate.predictions(sc.obj.train)
+    
+    tmp.results <- tibble(disease = i, 
+                          AUC_taxonomic=eval_data(sc.obj.train)$auroc %>% as.double(),
+                          nStudies = meta.train %>% pull(studies) %>% unique() %>% length(),
+                          nSamples = meta.train %>% pull(internal_id) %>% unique() %>% length(),
+                          nSubjects = meta.train %>% pull(subject_id) %>% unique() %>% length(), 
+                          multipleSubjects = meta.train %>% pull(subject_id) %>% unique() %>% length() != nrow(meta.train),
+                          nCase = meta.train %>% filter(disease == i) %>% nrow(),
+                          nControl = meta.train %>% filter(disease == "Control") %>% nrow()
+    )
+    auroc.tax <- bind_rows(auroc.tax, tmp.results)
+    
+    # save the trained model
+    sc.list[[i]] <- sc.obj.train
+}
+
+# save the models 
+#saveRDS(sc.list, here("manuscript/Disease_diagnosis_taxonomy_based_model_list.rds"))
+
+# save the result table
+saveRDS(auroc.tax, here("manuscript/Disease_diagnosis_taxonomy_based_AUROC.rds"))
+```
+
+
+# SIAMCAT with EDS and taxonomic profile 
+
+prepare the enterotype probability data: 
+add the enterotype probability values as a feature to the motus.ind table 
+```{r}
+et.features <- meta.ind %>% 
+  select(internal_id, ET_dysbiosis) %>% 
+  column_to_rownames("internal_id") %>% 
+  t()
+
+feat.ind <- motus.ind[,colnames(motus.ind) %in% meta.ind$internal_id] 
+table(colnames(et.features) == colnames(feat.ind))
+feat.ind.comb <- rbind(et.features, feat.ind)
+```
+
+```{r eval=FALSE, include=FALSE}
+# create tibble to store all the predictions
+auroc.all <- tibble(disease = character(), 
+                  AUC_tax_and_probabilites = double(),
+                  nStudies = numeric(), 
+                  nSamples = numeric(),
+                  nSubjects = numeric(),
+                  multipleSubjects = logical(), 
+                  nCase = numeric(), 
+                  nControl = numeric()
+                  )
+
+# and a list to save the trained SIAMCAT objects
+#i="Liver Cirrhosis" # code testing
+sc.list <- list()
+for (i in disease.list){
+  print(i)
+  # filter data for the samples for one disease
+  meta.train <- meta.ind %>% filter(studies %in% c(meta.ind %>% filter(disease == i) %>% 
+                                                     pull(studies) %>% unique())) %>% 
+    filter(disease %in% c(i, "Control")) %>% 
+    # order the levels for order in the model 
+    mutate(disease = factor(disease, levels = c("Control", i))) %>% 
+    as.data.frame()
+  
+  rownames(meta.train) <- meta.train$internal_id
+  
+  feat <- feat.ind.comb[,colnames(feat.ind.comb) %in% meta.train$internal_id] 
+  
+  # create SIAMCAT object
+  sc.obj.train <- siamcat(feat=feat, meta=meta.train, 
+                          label='disease', case=i)
+  # normalize features
+  sc.obj.train <- normalize.features(sc.obj.train, norm.method = 'log.std',
+                                     norm.param=list(log.n0=1e-05, sd.min.q=0),feature.type = 'original')
+  
+  # do we have multiple samples per subject? 
+  if(meta.train %>% pull(subject_id) %>% unique() %>% length() == nrow(meta.train)){
+    # Create data split
+    sc.obj.train <- create.data.split(sc.obj.train,
+                                      num.folds = 5, num.resample = 5)
+  } else {
+    sc.obj.train <- create.data.split(sc.obj.train, 
+                                      num.folds = 5, num.resample = 5, 
+                                      inseparable = 'subject_id')
+  }
+    # train LASSO model
+    sc.obj.train <- train.model(sc.obj.train, method='lasso_ll')
+    
+    sc.obj.train <- make.predictions(sc.obj.train)
+    sc.obj.train <- evaluate.predictions(sc.obj.train)
+    
+    tmp.results <- tibble(disease = i, 
+                          AUC_tax_and_probabilites=eval_data(sc.obj.train)$auroc %>% as.double(),
+                          nStudies = meta.train %>% pull(studies) %>% unique() %>% length(),
+                          nSamples = meta.train %>% pull(internal_id) %>% unique() %>% length(),
+                          nSubjects = meta.train %>% pull(subject_id) %>% unique() %>% length(), 
+                          multipleSubjects = meta.train %>% pull(subject_id) %>% unique() %>% length() != nrow(meta.train),
+                          nCase = meta.train %>% filter(disease == i) %>% nrow(),
+                          nControl = meta.train %>% filter(disease == "Control") %>% nrow()
+    )
+    auroc.all <- bind_rows(auroc.all, tmp.results)
+    
+    # save the trained model
+    sc.list[[i]] <- sc.obj.train
+}
+
+# save the models 
+# saveRDS(sc.list, here("fulldata_v2/analysis/adults_filtered_gtdb/models.disease.diagnosis/Disease_diagnosis_taxonomy_DysbiosisScore_model_list.rds"))
+rm(sc.list)
+# save the result table
+saveRDS(auroc.all, here("manuscript/Disease_diagnosis_taxonomy_DysbiosisScore_AUROC.rds"))
+```
+
+
+```{r}
+
+auroc.comb <- auroc.eds %>% left_join(auroc.tax)
+auroc.comb3 <- auroc.comb %>% left_join(auroc.all)
+
+summary.plot <-auroc.comb3 %>% 
+  arrange(desc(AUC_taxonomic)) %>% 
+  mutate(disease = factor(disease, levels = unique(.$disease))) %>% 
+  ggplot(aes(x=AUC_eds, y=disease)) +
+  geom_segment(aes(x=AUC_eds, xend=AUC_taxonomic, y=disease, yend=disease), color="grey") +
+  geom_segment(aes(x=AUC_taxonomic, xend=AUC_tax_and_probabilites, y = disease, yend= disease), color ="grey")+
+  # Model based on EDS score
+ geom_point(aes(x=AUC_eds, y=disease), color="#B5838D", size=3, shape = 15 ) +
+  # model based on taxonomic profile
+  geom_point(aes(x=AUC_taxonomic, y=disease), color="#457B9D", size=3 , shape = 16) +
+  #geom_point(aes(x=AUC_taxonomic, y=disease), color="#457B9D", size=3 , shape = 2) +
+  # model based on ET probabilites
+  #geom_point(aes(x=AUC_ET_probabilites, y = disease), color ="#677B61", size = 3)+
+  # model based on taxonomic profile together with the probabilites 
+  geom_point(aes(x=AUC_tax_and_probabilites, y = disease), color ="#677B61", size = 3, shape = 17)+
+  xlab("AUC")+ylab("")+
+  geom_vline(xintercept = 0.5, color = "#CAD2C5", lty = "dashed")
+
+summary.plot
+
+saveRDS(summary.plot, here("manuscript/figures/disease_classification_model_auc_comparisons.rds"))
+```
