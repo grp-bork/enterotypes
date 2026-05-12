@@ -436,4 +436,203 @@ kaplan.dysbiosis$plot <- kaplan.dysbiosis$plot + theme(legend.position = "none")
 kaplan.dysbiosis
 ```
 
+# Linear Model Taxa ~ EDS
+
+## all samples
+```{r}
+data_adults = counts
+# packages
+library(compositions)
+
+metadata = metadata %>% 
+  column_to_rownames("internal_id")
+# align samples
+common <- intersect(colnames(data_adults), rownames(metadata))
+X <- data_adults[, common, drop=FALSE]
+meta <- metadata[common, , drop=FALSE]
+meta = metadata %>% 
+  select(studies, fkm_k3, ET_dysbiosis, disease)
+# CLR transform (add small pseudocount)
+X_clr <- t(clr(t(X + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
+X_clr = as.matrix(X_clr)
+# choose covariates you have (edit this list!)
+covars <- c("studies", "disease")
+
+# build formula string
+rhs <- paste(c("ET_dysbiosis", covars), collapse = " + ")
+
+# fit genus-wise linear models: clr(genus) ~ ET + covariates
+res <- lapply(rownames(X_clr), function(g) {
+  df <- data.frame(y = as.numeric(X_clr[g, ]), meta)
+  fit <- lm(as.formula(paste("y ~", rhs)), data=df)
+
+  s <- summary(fit)$coefficients
+  if (!"ET_dysbiosis" %in% rownames(s)) return(NULL)
+
+  data.frame(
+    genus = g,
+    beta = s["ET_dysbiosis","Estimate"],
+    se   = s["ET_dysbiosis","Std. Error"],
+    t    = s["ET_dysbiosis","t value"],
+    p    = s["ET_dysbiosis","Pr(>|t|)"],
+    row.names = NULL
+  )
+})
+
+res <- do.call(rbind, res)
+res$padj <- p.adjust(res$p, method="BH")
+res <- res[order(res$padj, res$p), ]
+head(res, 20)
+res %>% filter(padj>0.05)
+
+saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS.rds"))
+```
+
+## only Prevotella samples
+
+```{r}
+# filter metadata for prevotella samples
+meta_prev = metadata %>% filter(fkm_k3 == "Prevotella")  
+
+# align samples
+common <- intersect(colnames(data_adults), rownames(meta_prev))
+X_prev <- data_adults[, common, drop=FALSE]
+meta_prev <- meta_prev[common, , drop=FALSE]
+meta_prev = meta_prev %>% 
+  select(studies, fkm_k3, ET_dysbiosis, disease)
+# CLR transform (add small pseudocount)
+X_prev_clr <- t(clr(t(X_prev + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
+X_prev_clr = as.matrix(X_prev_clr)
+# choose covariates you have (edit this list!)
+covars <- c("studies", "disease")
+
+# build formula string
+rhs <- paste(c("ET_dysbiosis", covars), collapse = " + ")
+
+# fit genus-wise linear models: clr(genus) ~ ET + covariates
+res_prev <- lapply(rownames(X_prev_clr), function(g) {
+  df <- data.frame(y = as.numeric(X_prev_clr[g, ]), meta_prev)
+  fit <- lm(as.formula(paste("y ~", rhs)), data=df)
+
+  s <- summary(fit)$coefficients
+  if (!"ET_dysbiosis" %in% rownames(s)) return(NULL)
+
+  data.frame(
+    genus = g,
+    beta = s["ET_dysbiosis","Estimate"],
+    se   = s["ET_dysbiosis","Std. Error"],
+    t    = s["ET_dysbiosis","t value"],
+    p    = s["ET_dysbiosis","Pr(>|t|)"],
+    row.names = NULL
+  )
+})
+
+res_prev <- do.call(rbind, res_prev)
+res_prev$padj <- p.adjust(res_prev$p, method="BH")
+res_prev <- res_prev[order(res_prev$padj, res_prev$p), ]
+head(res_prev, 20)
+res_prev %>% filter(padj>0.05)
+saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS_Prevotella.rds"))
+```
+
+## only Firmicutes samples
+
+```{r}
+# filter metadata for prevotella samples
+meta_firm = metadata %>% filter(fkm_k3 == "Firmicutes")  
+
+# align samples
+common <- intersect(colnames(data_adults), rownames(meta_firm))
+X_firm <- data_adults[, common, drop=FALSE]
+meta_firm <- meta_firm[common, , drop=FALSE]
+meta_firm = meta_firm %>% 
+  select(studies, fkm_k3, ET_dysbiosis, disease)
+# CLR transform (add small pseudocount)
+X_firm_clr <- t(clr(t(X_firm + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
+X_firm_clr = as.matrix(X_firm_clr)
+# choose covariates you have (edit this list!)
+covars <- c("studies", "disease")
+
+# build formula string
+rhs <- paste(c("ET_dysbiosis", covars), collapse = " + ")
+
+# fit genus-wise linear models: clr(genus) ~ ET + covariates
+res_firm <- lapply(rownames(X_firm_clr), function(g) {
+  df <- data.frame(y = as.numeric(X_firm_clr[g, ]), meta_firm)
+  fit <- lm(as.formula(paste("y ~", rhs)), data=df)
+
+  s <- summary(fit)$coefficients
+  if (!"ET_dysbiosis" %in% rownames(s)) return(NULL)
+
+  data.frame(
+    genus = g,
+    beta = s["ET_dysbiosis","Estimate"],
+    se   = s["ET_dysbiosis","Std. Error"],
+    t    = s["ET_dysbiosis","t value"],
+    p    = s["ET_dysbiosis","Pr(>|t|)"],
+    row.names = NULL
+  )
+})
+
+res_firm <- do.call(rbind, res_firm)
+res_firm$padj <- p.adjust(res_firm$p, method="BH")
+res_firm <- res_firm[order(res_firm$padj, res_firm$p), ]
+head(res_firm, 20)
+res_firm %>% filter(padj>0.05)
+
+saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS_Firmicutes.rds"))
+```
+
+
+
+## only Bacteroides / Phocaeicola samples
+
+```{r}
+# filter metadata for prevotella samples
+meta_bact = metadata %>% filter(fkm_k3 == "Bact_Phoc")  
+
+# align samples
+common <- intersect(colnames(data_adults), rownames(meta_bact))
+X_bact <- data_adults[, common, drop=FALSE]
+meta_bact <- meta_bact[common, , drop=FALSE]
+meta_bact = meta_bact %>% 
+  select(studies, fkm_k3, ET_dysbiosis, disease)
+# CLR transform (add small pseudocount)
+X_bact_clr <- t(clr(t(X_bact + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
+X_bact_clr = as.matrix(X_bact_clr)
+# choose covariates you have (edit this list!)
+covars <- c("studies", "disease" )
+
+# build formula string
+rhs <- paste(c("ET_dysbiosis", covars), collapse = " + ")
+
+# fit genus-wise linear models: clr(genus) ~ ET + covariates
+res_bact <- lapply(rownames(X_bact_clr), function(g) {
+  df <- data.frame(y = as.numeric(X_bact_clr[g, ]), meta_bact)
+  fit <- lm(as.formula(paste("y ~", rhs)), data=df)
+
+  s <- summary(fit)$coefficients
+  if (!"ET_dysbiosis" %in% rownames(s)) return(NULL)
+
+  data.frame(
+    genus = g,
+    beta = s["ET_dysbiosis","Estimate"],
+    se   = s["ET_dysbiosis","Std. Error"],
+    t    = s["ET_dysbiosis","t value"],
+    p    = s["ET_dysbiosis","Pr(>|t|)"],
+    row.names = NULL
+  )
+})
+
+res_bact <- do.call(rbind, res_bact)
+res_bact$padj <- p.adjust(res_bact$p, method="BH")
+res_bact <- res_bact[order(res_bact$padj, res_bact$p), ]
+head(res_bact, 20)
+res_bact %>% filter(padj>0.05)
+
+saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS_Bacteroides.rds"))
+```
+
+
+
 
