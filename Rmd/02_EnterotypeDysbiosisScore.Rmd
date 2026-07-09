@@ -452,6 +452,15 @@ X <- data_adults[, common, drop=FALSE]
 meta <- metadata[common, , drop=FALSE]
 meta = metadata %>% 
   select(studies, fkm_k3, ET_dysbiosis, disease)
+
+#filter for prevalence and abundance
+min_prev  <- 0.10    # present in >= 10% of samples
+min_abund <- 1e-4    # detection threshold 
+
+present <- X > min_abund
+keep    <- rowSums(present) >= ceiling(min_prev * ncol(X))
+X       <- X[keep, , drop = FALSE]
+
 # CLR transform (add small pseudocount)
 X_clr <- t(clr(t(X + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
 X_clr = as.matrix(X_clr)
@@ -483,9 +492,10 @@ res <- do.call(rbind, res)
 res$padj <- p.adjust(res$p, method="BH")
 res <- res[order(res$padj, res$p), ]
 head(res, 20)
-res %>% filter(padj>0.05)
+res %>% filter(padj<0.05)
 
-saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS.rds"))
+#old_res = readRDS(here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS.rds"))
+saveRDS(res, here("results/dysbiosisScore/LM_EDS.rds"))
 ```
 
 ## only Prevotella samples
@@ -500,6 +510,15 @@ X_prev <- data_adults[, common, drop=FALSE]
 meta_prev <- meta_prev[common, , drop=FALSE]
 meta_prev = meta_prev %>% 
   select(studies, fkm_k3, ET_dysbiosis, disease)
+
+#filter for prevalence and abundance
+min_prev  <- 0.10    # present in >= 10% of samples
+min_abund <- 1e-4    # detection threshold 
+
+present <- X > min_abund
+keep    <- rowSums(present) >= ceiling(min_prev * ncol(X))
+X       <- X[keep, , drop = FALSE]
+
 # CLR transform (add small pseudocount)
 X_prev_clr <- t(clr(t(X_prev + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
 X_prev_clr = as.matrix(X_prev_clr)
@@ -531,8 +550,9 @@ res_prev <- do.call(rbind, res_prev)
 res_prev$padj <- p.adjust(res_prev$p, method="BH")
 res_prev <- res_prev[order(res_prev$padj, res_prev$p), ]
 head(res_prev, 20)
-res_prev %>% filter(padj>0.05)
-saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS_Prevotella.rds"))
+res_prev %>% filter(padj<0.05)
+
+saveRDS(res, here("results/dysbiosisScore/LM_EDS_Prevotella.rds"))
 ```
 
 ## only Firmicutes samples
@@ -547,6 +567,15 @@ X_firm <- data_adults[, common, drop=FALSE]
 meta_firm <- meta_firm[common, , drop=FALSE]
 meta_firm = meta_firm %>% 
   select(studies, fkm_k3, ET_dysbiosis, disease)
+
+#filter for prevalence and abundance
+min_prev  <- 0.10    # present in >= 10% of samples
+min_abund <- 1e-4    # detection threshold 
+
+present <- X > min_abund
+keep    <- rowSums(present) >= ceiling(min_prev * ncol(X))
+X       <- X[keep, , drop = FALSE]
+
 # CLR transform (add small pseudocount)
 X_firm_clr <- t(clr(t(X_firm + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
 X_firm_clr = as.matrix(X_firm_clr)
@@ -580,7 +609,7 @@ res_firm <- res_firm[order(res_firm$padj, res_firm$p), ]
 head(res_firm, 20)
 res_firm %>% filter(padj>0.05)
 
-saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS_Firmicutes.rds"))
+saveRDS(res, here("results/dysbiosisScore/LM_EDS_Firmicutes.rds"))
 ```
 
 
@@ -597,6 +626,16 @@ X_bact <- data_adults[, common, drop=FALSE]
 meta_bact <- meta_bact[common, , drop=FALSE]
 meta_bact = meta_bact %>% 
   select(studies, fkm_k3, ET_dysbiosis, disease)
+
+#filter for prevalence and abundance
+min_prev  <- 0.10    # present in >= 10% of samples
+min_abund <- 1e-4    # detection threshold 
+
+present <- X > min_abund
+keep    <- rowSums(present) >= ceiling(min_prev * ncol(X))
+X       <- X[keep, , drop = FALSE]
+
+
 # CLR transform (add small pseudocount)
 X_bact_clr <- t(clr(t(X_bact + 1e-6)))  # keep genera x samples; clr expects samples x features so we transpose twice
 X_bact_clr = as.matrix(X_bact_clr)
@@ -628,11 +667,24 @@ res_bact <- do.call(rbind, res_bact)
 res_bact$padj <- p.adjust(res_bact$p, method="BH")
 res_bact <- res_bact[order(res_bact$padj, res_bact$p), ]
 head(res_bact, 20)
-res_bact %>% filter(padj>0.05)
+res_bact %>% filter(padj<0.05)
 
-saveRDS(res, here("fulldata_v2/analysis/adults_filtered_gtdb/dysbiosisScore/LM_EDS_Bacteroides.rds"))
+saveRDS(res, here("results/dysbiosisScore/LM_EDS_Bacteroides.rds"))
 ```
 
 
+```{r}
+res_all <- bind_rows(
+  res %>% mutate(enterotype = "allSamples"),
+  res_prev %>% mutate(enterotype = "Prevotella"),
+  res_bact %>% mutate(enterotype = "Bacteroides"),
+  res_firm %>% mutate(enterotype = "Firmicutes")
+) %>%
+  # keep only rows with needed columns
+  select(enterotype, genus, beta, padj) %>%
+  filter(!is.na(beta), !is.na(padj))
+
+write_tsv(res_all, here("results/dysbiosisScore/LM_EDS_all_results.tsv"))
+```
 
 

@@ -760,7 +760,7 @@ ET_count <- metadata %>%
   summarise(et_count= n_distinct(fkm_k3))
 ```
 
-```{r, fig.width=15, fig.height = 20}
+```{r, fig.width=8, fig.height = 10}
 df <- metadata %>% 
   filter(!is.na(fkm_k3)) %>% 
   # calculate number of samples per study
@@ -809,7 +809,7 @@ p3.studies <- df %>%
   select(studies, SampleNumber) %>% distinct() %>% 
   ggplot(aes(x=studies, y = SampleNumber))+
   geom_col()+
-  geom_text(aes(label = SampleNumber),position = position_stack(vjust = 1), hjust = -0.1, size = 3)+
+  geom_text(aes(label = SampleNumber),position = position_stack(vjust = 1), hjust = -0.1, size = 6)+
    theme(axis.text.y = element_blank(), 
         axis.ticks.y = element_blank(), 
         axis.title.y = element_blank(), 
@@ -820,9 +820,112 @@ p3.studies <- df %>%
  
 
 
-study.p <- ggarrange(p1,p3.studies,  ncol = 2, widths = c(9,9), align = "h", common.legend = TRUE)
+study.p <- ggarrange(p1,p3.studies,  ncol = 2, widths = c(2,1), align = "h", common.legend = TRUE)
 study.p
+
 ```
+
+split the plot onto two:
+```{r eval=FALSE, include=FALSE}
+library(tidyverse)
+library(patchwork)
+
+# ---- Make df ----
+df <- metadata %>% 
+  filter(!is.na(fkm_k3)) %>% 
+  select(studies, fkm_k3) %>% 
+  group_by(studies) %>% 
+  mutate(SampleNumber = n()) %>% 
+  filter(SampleNumber >= 9) %>% 
+  group_by(studies, SampleNumber) %>% 
+  count(fkm_k3) %>% 
+  mutate(n_prob = n / SampleNumber) %>% 
+  left_join(ET_count, by = "studies")
+
+# ---- Define study order based on Firmicutes proportion ----
+study_order <- df %>% 
+  filter(fkm_k3 == "Firmicutes") %>% 
+  arrange(n_prob) %>% 
+  pull(studies)
+
+# In case some studies do not have Firmicutes, add them at the end
+study_order <- c(
+  study_order,
+  setdiff(unique(df$studies), study_order)
+)
+
+# Split into two A4 pages
+study_split <- split(
+  study_order,
+  ceiling(seq_along(study_order) / ceiling(length(study_order) / 2))
+)
+make_plot <- function(study_subset) {
+  
+  df_sub <- df %>% 
+    filter(studies %in% study_subset) %>% 
+    mutate(
+      studies = factor(studies, levels = rev(study_subset)),
+      fkm_k3 = factor(fkm_k3, levels = c("Prevotella", "Firmicutes", "Bact_Phoc")),
+      ET_count = as.factor(et_count)
+    )
+  
+  p1 <- df_sub %>% 
+    ggplot(aes(x = n_prob, y = studies, fill = fkm_k3)) +
+    geom_col(position = "stack", color = "white") +
+    scale_fill_manual(name = "Enterotype", values = enterotype_colors) +
+    xlab("Proportion of samples in each enterotype") +
+    ylab(NULL) +
+    theme(
+      axis.text = element_text(size = 9),
+      legend.position = "top"
+    )
+
+  
+  p3 <- df_sub %>% 
+    select(studies, SampleNumber) %>% 
+    distinct() %>% 
+    ggplot(aes(x = studies, y = SampleNumber)) +
+    geom_col() +
+    geom_text(
+      aes(label = SampleNumber),
+      hjust = -0.1,
+      size = 4
+    ) +
+    coord_flip() +
+    ylab("Sample number in each study") +
+    xlab(NULL) +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.title.y = element_blank()
+    )
+  
+  p1 + p3 +
+    plot_layout(widths = c(5, 2))
+}
+plot_page1 <- make_plot(study_split[[1]])
+plot_page2 <- make_plot(study_split[[2]])
+plot_page1
+plot_page2
+
+ggsave(
+  here("figures/enterotype_study_plot_page1.pdf"),
+  plot_page1,
+  height = 11.69,
+  width = 8.27,
+  units = "in"
+)
+
+ggsave(
+  here("figures/enterotype_study_plot_page2.pdf"),
+  plot_page2,
+  height = 11.69,
+  width = 8.27,
+  units = "in"
+)
+
+```
+
 proportion of enterotype classifications in each study 
 ```{r}
 df.total <- metadata %>% 
